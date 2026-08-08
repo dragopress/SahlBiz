@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+:root {
+  --geo-primary: #4f46e5;
+  --geo-emerald: #10b981;
+  --geo-dark-bg: #0b0f19;
+  --geo-dark-card: #111827;
+  --geo-border: #1f293d;
+  --geo-border-accent: #312e81;
+}
+
+@layer utilities {
+  /* Geometric Sharp Corner Angles */
+  .geo-angle-corner {
+    clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px));
+  }
+
+  .geo-angle-top-right {
+    clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%);
+  }
+
+  .geo-card-frame {
+    background: linear-gradient(135deg, #0f172a 0%, #0b0f19 100%);
+    border: 1px solid var(--geo-border);
+    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.4);
+  }
+
+  .geo-card-light {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+  }
+
+  .geo-border-glow {
+    border-color: rgba(79, 70, 229, 0.35);
+  }
+
+  /* Hide unnecessary elements during print */
+  @media print {
+    body * {
+      visibility: hidden;
+    }
+    #printable-invoice, #printable-invoice * {
+      visibility: visible;
+    }
+    #printable-invoice {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100%;
+      margin: 0;
+      padding: 20px;
+    }
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #090d16;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #1e293b;
+    border-radius: 2px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #10b981;
+  }
+}

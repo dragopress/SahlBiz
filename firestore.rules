@@ -1,0 +1,103 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isOrgAccess(data) {
+      return isSignedIn() && (
+        data.orgId == request.auth.uid ||
+        data.orgId == "org_" + request.auth.uid.slice(0, 8) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         data.orgId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.orgId)
+      );
+    }
+
+    // Default catch-all deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Test connection document
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+
+    // User Accounts & Multi-Tenant Mappings
+    match /users/{userId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // System Config & Control Plane Settings
+    match /systemConfig/{configId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // Subscriptions & Payment Transactions
+    match /subscriptions/{subId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // Business Profiles
+    match /businessProfiles/{profileId} {
+      allow get, list: if isSignedIn() && (resource == null || isOrgAccess(resource.data));
+      allow create: if isSignedIn() && isValidId(profileId) && isOrgAccess(request.resource.data);
+      allow update: if isSignedIn() && isValidId(profileId) && isOrgAccess(resource.data) && isOrgAccess(request.resource.data);
+      allow delete: if isSignedIn() && isValidId(profileId) && isOrgAccess(resource.data);
+    }
+
+    // Customers Collection
+    match /customers/{customerId} {
+      allow get, list: if isSignedIn() && isOrgAccess(resource.data);
+      allow create: if isSignedIn() && isValidId(customerId) && isOrgAccess(request.resource.data);
+      allow update: if isSignedIn() && isValidId(customerId) && isOrgAccess(resource.data) && isOrgAccess(request.resource.data);
+      allow delete: if isSignedIn() && isValidId(customerId) && isOrgAccess(resource.data);
+    }
+
+    // Products Catalog
+    match /products/{productId} {
+      allow get, list: if isSignedIn() && isOrgAccess(resource.data);
+      allow create: if isSignedIn() && isValidId(productId) && isOrgAccess(request.resource.data);
+      allow update: if isSignedIn() && isValidId(productId) && isOrgAccess(resource.data) && isOrgAccess(request.resource.data);
+      allow delete: if isSignedIn() && isValidId(productId) && isOrgAccess(resource.data);
+    }
+
+    // Suppliers Collection
+    match /suppliers/{supplierId} {
+      allow get, list: if isSignedIn() && isOrgAccess(resource.data);
+      allow create: if isSignedIn() && isValidId(supplierId) && isOrgAccess(request.resource.data);
+      allow update: if isSignedIn() && isValidId(supplierId) && isOrgAccess(resource.data) && isOrgAccess(request.resource.data);
+      allow delete: if isSignedIn() && isValidId(supplierId) && isOrgAccess(resource.data);
+    }
+
+    // Business Documents (Invoices, Devis, BL, Commandes)
+    match /documents/{documentId} {
+      allow get, list: if isSignedIn() && isOrgAccess(resource.data);
+      allow create: if isSignedIn() && isValidId(documentId) && isOrgAccess(request.resource.data);
+      allow update: if isSignedIn() && isValidId(documentId) && isOrgAccess(resource.data) && isOrgAccess(request.resource.data);
+      allow delete: if isSignedIn() && isValidId(documentId) && isOrgAccess(resource.data);
+    }
+
+    // Expenses Collection
+    match /expenses/{expenseId} {
+      allow get, list: if isSignedIn() && isOrgAccess(resource.data);
+      allow create: if isSignedIn() && isValidId(expenseId) && isOrgAccess(request.resource.data);
+      allow update: if isSignedIn() && isValidId(expenseId) && isOrgAccess(resource.data) && isOrgAccess(request.resource.data);
+      allow delete: if isSignedIn() && isValidId(expenseId) && isOrgAccess(resource.data);
+    }
+
+    // Employees Directory
+    match /employees/{employeeId} {
+      allow get, list: if isSignedIn() && isOrgAccess(resource.data);
+      allow create: if isSignedIn() && isValidId(employeeId) && isOrgAccess(request.resource.data);
+      allow update: if isSignedIn() && isValidId(employeeId) && isOrgAccess(resource.data) && isOrgAccess(request.resource.data);
+      allow delete: if isSignedIn() && isValidId(employeeId) && isOrgAccess(resource.data);
+    }
+  }
+}
