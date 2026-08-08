@@ -35,7 +35,7 @@ const GeometricGridIcon = ({ className = "w-4 h-4 text-indigo-500" }: { classNam
 );
 
 export const Header: React.FC<HeaderProps> = ({ onOpenAiAssistant, onOpenPricing }) => {
-  const { userProfile, logout } = useAuth();
+  const { currentUser, userProfile, logout } = useAuth();
   const {
     language,
     setLanguage,
@@ -46,6 +46,10 @@ export const Header: React.FC<HeaderProps> = ({ onOpenAiAssistant, onOpenPricing
     pendingSyncCount,
     triggerManualSync
   } = useStore();
+
+  const userEmail = currentUser?.email || userProfile?.email || '';
+  const emailLower = userEmail.toLowerCase();
+  const isAdmin = emailLower === 'elbyoutydragopress@gmail.com' || emailLower.includes('admin') || emailLower === 'admin@sahlbiz.ma';
 
   const languages: { code: Language; label: string; flag: string }[] = [
     { code: 'fr', label: 'Français', flag: '🇲🇦' },
@@ -186,14 +190,16 @@ export const Header: React.FC<HeaderProps> = ({ onOpenAiAssistant, onOpenPricing
           </button>
 
           {/* Admin Control Plane Quick Shortcut */}
-          <button
-            onClick={() => setActiveModule('admin')}
-            className="hidden lg:flex items-center gap-1.5 text-xs bg-slate-900 hover:bg-slate-800 text-amber-400 font-mono font-bold px-2.5 py-1.5 rounded-none border border-slate-700 transition-colors shadow-xs"
-            title="Console Master Control Plane Admin"
-          >
-            <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
-            <span>Control Plane</span>
-          </button>
+          {isAdmin && (
+            <button
+              onClick={() => setActiveModule('admin')}
+              className="hidden lg:flex items-center gap-1.5 text-xs bg-slate-900 hover:bg-slate-800 text-amber-400 font-mono font-bold px-2.5 py-1.5 rounded-none border border-slate-700 transition-colors shadow-xs"
+              title="Console Master Control Plane Admin"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+              <span>Control Plane</span>
+            </button>
+          )}
 
           {/* Language Switcher */}
           <div className="relative flex items-center bg-slate-100 rounded-none p-0.5 border border-slate-200 text-xs">

@@ -101,6 +101,7 @@ interface StoreContextType {
 
   expenses: Expense[];
   addExpense: (exp: Omit<Expense, 'id'>) => void;
+  updateExpense: (exp: Expense) => void;
   deleteExpense: (id: string) => void;
 
   employees: Employee[];
@@ -428,10 +429,73 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     saveExpenseToFirestore(newExp, orgId);
   };
 
+  const updateExpense = (updatedExp: Expense) => {
+    setExpenses(prev => prev.map(e => e.id === updatedExp.id ? updatedExp : e));
+    saveExpenseToFirestore(updatedExp, orgId);
+  };
+
   const deleteExpense = (id: string) => {
     setExpenses(prev => prev.filter(e => e.id !== id));
     deleteExpenseFromFirestore(id);
   };
+
+  // Autogenerate recurring expenses that are due
+  useEffect(() => {
+    if (expenses.length === 0) return;
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    let hasChanges = false;
+    let currentExpenses = [...expenses];
+
+    // Find active recurring expenses that have hit their next occurrence date
+    const activeRecurring = currentExpenses.filter(
+      e => e.isRecurring && e.nextOccurrenceDate && e.nextOccurrenceDate <= todayStr && e.recurringStatus !== 'cancelled'
+    );
+
+    if (activeRecurring.length > 0) {
+      activeRecurring.forEach(oldExp => {
+        const nextOccDate = oldExp.nextOccurrenceDate!;
+        
+        // Add exactly 1 month
+        const d = new Date(nextOccDate);
+        d.setMonth(d.getMonth() + 1);
+        const futureOccDate = d.toISOString().split('T')[0];
+
+        // Create the new expense
+        const newExpId = `exp-rec-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        const newExp: Expense = {
+          ...oldExp,
+          id: newExpId,
+          date: nextOccDate,
+          isRecurring: true,
+          nextOccurrenceDate: futureOccDate,
+          recurringStatus: 'active',
+          notes: oldExp.notes ? `${oldExp.notes} (Générée automatiquement)` : 'Générée automatiquement',
+        };
+
+        // Deactivate recurrence on the older occurrence to maintain a single active chain head
+        const updatedOldExp: Expense = {
+          ...oldExp,
+          isRecurring: false,
+          recurringStatus: 'completed'
+        };
+
+        currentExpenses = currentExpenses.map(item => 
+          item.id === oldExp.id ? updatedOldExp : item
+        );
+        currentExpenses.unshift(newExp);
+
+        saveExpenseToFirestore(newExp, orgId);
+        saveExpenseToFirestore(updatedOldExp, orgId);
+        
+        hasChanges = true;
+      });
+
+      if (hasChanges) {
+        setExpenses(currentExpenses);
+      }
+    }
+  }, [expenses, orgId]);
 
   const addEmployee = (empData: Omit<Employee, 'id'>) => {
     const newEmp: Employee = {
@@ -680,6 +744,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         recordDocumentPayment,
         expenses,
         addExpense,
+        updateExpense,
         deleteExpense,
         employees,
         addEmployee,

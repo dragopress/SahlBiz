@@ -232,10 +232,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLoginSuccess, onEnte
             {currentUser ? (
               <button
                 onClick={() => onEnterDashboard && onEnterDashboard()}
-                className="px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-emerald-950/50 flex items-center gap-2 transition-all transform active:scale-95 font-mono"
+                className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded-xl text-xs font-bold text-slate-200 transition-colors flex items-center gap-2"
               >
-                <span className="w-2 h-2 rounded-full bg-slate-950 animate-ping" />
-                <span>Accéder au Dashboard →</span>
+                <Lock className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Se connecter</span>
               </button>
             ) : (
               <>
@@ -288,7 +288,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLoginSuccess, onEnte
                 onClick={() => onEnterDashboard && onEnterDashboard()}
                 className="w-full sm:w-auto px-8 py-4 bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black text-sm rounded-2xl shadow-xl shadow-emerald-950/60 flex items-center justify-center gap-3 transition-all transform hover:-translate-y-0.5 active:translate-y-0 uppercase tracking-wider font-mono"
               >
-                <span>Accéder à mon Espace Dashboard</span>
+                <span>Se connecter à mon Espace</span>
                 <ArrowRight className="w-5 h-5 stroke-[2.5]" />
               </button>
             ) : (

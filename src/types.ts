@@ -151,6 +151,12 @@ export interface Expense {
   isTaxDeductible?: boolean;
   isDeductible?: boolean;
   notes?: string;
+  
+  // Recurring features
+  isRecurring?: boolean;
+  recurringInterval?: 'monthly';
+  nextOccurrenceDate?: string; // YYYY-MM-DD
+  recurringStatus?: 'active' | 'completed' | 'cancelled';
 }
 
 export interface Employee {
