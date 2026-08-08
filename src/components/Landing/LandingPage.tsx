@@ -169,13 +169,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLoginSuccess, onEnte
     return () => clearInterval(interval);
   }, [isAutoPlay, slides.length]);
 
-  // Redirect on successful login
+  // Redirect on successful login only if a modal was actively open (representing explicit user action)
   useEffect(() => {
-    if (currentUser) {
-      if (showLoginModal || showRegModal) {
-        setShowLoginModal(false);
-        setShowRegModal(false);
-      }
+    if (currentUser && (showLoginModal || showRegModal)) {
+      setShowLoginModal(false);
+      setShowRegModal(false);
       if (onLoginSuccess) {
         onLoginSuccess();
       }
