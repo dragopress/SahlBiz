@@ -3,6 +3,7 @@ import { useStore, ModuleType } from '../context/StoreContext';
 import { useAuth } from '../context/AuthContext';
 import { getTranslation } from '../lib/i18n';
 import sahlbizLogo from '../assets/images/sahlbiz_logo_1786198689277.jpg';
+import { canAccessModule } from '../lib/rbac';
 import {
   LayoutDashboard,
   Users,
@@ -23,9 +24,7 @@ export const Sidebar: React.FC = () => {
   const { activeModule, setActiveModule, language, customers, documents, products } = useStore();
   const { currentUser, userProfile } = useAuth();
 
-  const userEmail = currentUser?.email || userProfile?.email || '';
-  const emailLower = userEmail.toLowerCase();
-  const isAdmin = emailLower === 'elbyoutydragopress@gmail.com' || emailLower.includes('admin') || emailLower === 'admin@sahlbiz.ma';
+  const isAdmin = userProfile?.role === 'admin';
 
   const unpaidKreddyCount = customers.filter(c => c.kreddyBalance > 0).length;
   const unpaidDocsCount = documents.filter(d => d.status === 'unpaid' || d.status === 'partial').length;
@@ -48,6 +47,8 @@ export const Sidebar: React.FC = () => {
   if (isAdmin) {
     navItems.push({ id: 'admin', labelKey: 'admin', icon: ShieldCheck });
   }
+
+  const allowedNavItems = navItems.filter(item => canAccessModule(userProfile?.role || 'owner', item.id));
 
   return (
     <aside className="w-full md:w-64 bg-slate-950 border-r border-slate-800 shrink-0 flex flex-col justify-between text-white relative overflow-hidden">
@@ -87,7 +88,7 @@ export const Sidebar: React.FC = () => {
         </div>
 
         <nav className="space-y-1">
-          {navItems.map(item => {
+          {allowedNavItems.map(item => {
             const Icon = item.icon;
             const isActive = activeModule === item.id;
             const label = getTranslation(language, item.labelKey);

@@ -20,6 +20,7 @@ export interface UserProfile {
   orgId: string;
   orgName: string;
   createdAt: string;
+  role?: string;
   plan?: string;
   billingCycle?: 'monthly' | 'annually';
   paymentMethod?: string;
@@ -55,13 +56,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const userDocRef = doc(db, 'users', user.uid);
           const userSnap = await getDoc(userDocRef);
 
+          let profileData: UserProfile;
+
           if (userSnap.exists()) {
-            setUserProfile(userSnap.data() as UserProfile);
+            profileData = userSnap.data() as UserProfile;
           } else {
             // Auto-provision default organization for user if not existing
             const defaultOrgName = user.displayName ? `${user.displayName}'s Company` : 'SahlBiz Enterprise';
             const defaultOrgId = `org_${user.uid.slice(0, 8)}`;
-            const newProfile: UserProfile = {
+            profileData = {
               uid: user.uid,
               email: user.email || '',
               displayName: user.displayName || user.email?.split('@')[0] || 'Utilisateur',
@@ -70,9 +73,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               createdAt: new Date().toISOString(),
             };
 
-            await setDoc(userDocRef, newProfile);
-            setUserProfile(newProfile);
+            await setDoc(userDocRef, profileData);
           }
+
+          // Secure bootstrapping for real initial administrators:
+          // The write will only succeed if the server-side firestore.rules verifies the authenticating user's email.
+          if (user.email === 'elbyoutydragopress@gmail.com' || user.email === 'admin@sahlbiz.ma') {
+            try {
+              const adminDocRef = doc(db, 'admins', user.uid);
+              const adminSnap = await getDoc(adminDocRef);
+              if (!adminSnap.exists()) {
+                await setDoc(adminDocRef, {
+                  email: user.email,
+                  role: 'admin',
+                  verifiedAt: new Date().toISOString()
+                });
+              }
+            } catch (adminErr) {
+              console.warn('Admin registry document write bypassed or restricted:', adminErr);
+            }
+          }
+
+          // Secure role lookup on server side:
+          try {
+            const adminDocRef = doc(db, 'admins', user.uid);
+            const adminSnap = await getDoc(adminDocRef);
+            if (adminSnap.exists()) {
+              profileData.role = 'admin';
+            } else {
+              profileData.role = profileData.role || 'owner';
+            }
+          } catch (lookupErr) {
+            console.warn('Server-side admin role lookup skipped or restricted:', lookupErr);
+            profileData.role = profileData.role || 'owner';
+          }
+
+          setUserProfile(profileData);
         } catch (err) {
           console.error('Error fetching user profile in AuthProvider:', err);
           // Fallback profile if Firestore read fails initially
@@ -83,6 +119,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             orgId: `org_${user.uid.slice(0, 8)}`,
             orgName: 'Ma Société SahlBiz',
             createdAt: new Date().toISOString(),
+            role: 'owner'
           });
         }
       } else {
@@ -94,12 +131,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsubscribe();
   }, []);
 
+  const isDemoModeEnabled = import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEMO_MODE === 'true';
+
+  const hashPassword = async (password: string): Promise<string> => {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(password + 'sahlbiz_salt_2026');
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  };
+
   const login = async (email: string, pass: string) => {
     try {
       await signInWithEmailAndPassword(auth, email, pass);
     } catch (err: any) {
-      if (err.code === 'auth/operation-not-allowed' || (err.message && err.message.includes('operation-not-allowed'))) {
-        console.warn('Firebase Email/Password Auth is not enabled in Firebase Console. Logging in locally.');
+      const isOperationNotAllowed = err.code === 'auth/operation-not-allowed' || (err.message && err.message.includes('operation-not-allowed'));
+      if (isOperationNotAllowed && isDemoModeEnabled) {
+        console.warn('Firebase Auth is not enabled. Running in secure local demo mode.');
         
         const fallbackUsersRaw = localStorage.getItem('sahlbiz_fallback_users');
         const fallbackUsers = fallbackUsersRaw ? JSON.parse(fallbackUsersRaw) : [];
@@ -107,7 +155,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const matched = fallbackUsers.find((u: any) => u.email.toLowerCase() === email.toLowerCase());
         
         if (matched) {
-          if (matched.pass === pass) {
+          const incomingHash = await hashPassword(pass);
+          const isMatch = matched.passHash ? (matched.passHash === incomingHash) : (matched.pass === pass);
+          
+          if (isMatch) {
             const mockUid = `demo_${matched.email.replace(/[^a-zA-Z0-9]/g, '')}`;
             const mockUser = {
               uid: mockUid,
@@ -138,34 +189,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             throw wrongPasswordError;
           }
         } else {
-          // Special admin/master bypass so the system owner can enter their console immediately
-          if (email.toLowerCase() === 'elbyoutydragopress@gmail.com' || email.toLowerCase() === 'admin@sahlbiz.ma') {
-            const mockUid = 'demo_admin';
-            const mockUser = {
-              uid: mockUid,
-              email: email,
-              displayName: 'Admin SahlBiz',
-              emailVerified: true,
-            } as User;
-            
-            const mockProfile: UserProfile = {
-              uid: mockUid,
-              email: email,
-              displayName: 'Admin SahlBiz',
-              orgId: 'org_master',
-              orgName: 'SahlBiz Technologies',
-              createdAt: new Date().toISOString(),
-              plan: 'business',
-              billingCycle: 'annually',
-              paymentMethod: 'cmi_card',
-              paymentStatus: 'confirmed',
-            };
-            
-            setCurrentUser(mockUser);
-            setUserProfile(mockProfile);
-            return;
-          }
-
           const notFoundError = new Error('User not found');
           (notFoundError as any).code = 'auth/user-not-found';
           throw notFoundError;
@@ -204,8 +227,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUserProfile(newProfile);
       }
     } catch (err: any) {
-      if (err.code === 'auth/operation-not-allowed' || (err.message && err.message.includes('operation-not-allowed'))) {
-        console.warn('Firebase Email/Password Auth is not enabled in Firebase Console. Registering locally.');
+      const isOperationNotAllowed = err.code === 'auth/operation-not-allowed' || (err.message && err.message.includes('operation-not-allowed'));
+      if (isOperationNotAllowed && isDemoModeEnabled) {
+        console.warn('Firebase Auth is not enabled. Registering locally in demo mode.');
         
         const fallbackUsersRaw = localStorage.getItem('sahlbiz_fallback_users');
         const fallbackUsers = fallbackUsersRaw ? JSON.parse(fallbackUsersRaw) : [];
@@ -216,9 +240,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           throw inUseError;
         }
 
+        const passHash = await hashPassword(pass);
         const newUser = {
           email,
-          pass,
+          passHash, // Secure hash, never store plaintext password!
           displayName,
           orgName
         };
@@ -269,12 +294,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       await sendPasswordResetEmail(auth, email);
     } catch (err: any) {
-      if (err.code === 'auth/operation-not-allowed' || (err.message && err.message.includes('operation-not-allowed'))) {
-        console.warn('Firebase password reset is not enabled. Simulating local reset.');
+      const isOperationNotAllowed = err.code === 'auth/operation-not-allowed' || (err.message && err.message.includes('operation-not-allowed'));
+      if (isOperationNotAllowed && isDemoModeEnabled) {
+        console.warn('Firebase password reset is not enabled. Simulating in local demo mode.');
         const fallbackUsersRaw = localStorage.getItem('sahlbiz_fallback_users');
         const fallbackUsers = fallbackUsersRaw ? JSON.parse(fallbackUsersRaw) : [];
         const matched = fallbackUsers.find((u: any) => u.email.toLowerCase() === email.toLowerCase());
-        if (!matched && email.toLowerCase() !== 'elbyoutydragopress@gmail.com' && email.toLowerCase() !== 'admin@sahlbiz.ma') {
+        if (!matched) {
           const notFoundError = new Error('User not found');
           (notFoundError as any).code = 'auth/user-not-found';
           throw notFoundError;

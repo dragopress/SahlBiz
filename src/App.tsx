@@ -19,14 +19,40 @@ import { ControlPlaneModule } from './components/Admin/ControlPlaneModule';
 import { AiAssistantModal } from './components/AiAssistant/AiAssistantModal';
 import { WhatsAppModal } from './components/WhatsApp/WhatsAppModal';
 import { Hexagon } from 'lucide-react';
+import { canAccessModule } from './lib/rbac';
+import { AccessDeniedView } from './components/Common/AccessDeniedView';
 
 const AppContent: React.FC<{ onShowLanding: () => void }> = ({ onShowLanding }) => {
+  const { currentUser, userProfile } = useAuth();
   const { activeModule, setActiveModule, whatsAppModalData, closeWhatsAppModal } = useStore();
 
   const [isAiOpen, setIsAiOpen] = useState(false);
   const [isPricingOpen, setIsPricingOpen] = useState(false);
 
+  const isAdmin = userProfile?.role === 'admin';
+
+  React.useEffect(() => {
+    if (activeModule === 'admin' && !isAdmin) {
+      setActiveModule('dashboard');
+    }
+  }, [activeModule, isAdmin, setActiveModule]);
+
   const renderModule = () => {
+    if (activeModule === 'admin' && !isAdmin) {
+      return <DashboardModule />;
+    }
+
+    const hasAccess = canAccessModule(userProfile?.role || 'owner', activeModule);
+    if (!hasAccess) {
+      return (
+        <AccessDeniedView
+          module={activeModule}
+          role={userProfile?.role || 'owner'}
+          onGoBack={() => setActiveModule('dashboard')}
+        />
+      );
+    }
+
     switch (activeModule) {
       case 'dashboard':
         return <DashboardModule />;

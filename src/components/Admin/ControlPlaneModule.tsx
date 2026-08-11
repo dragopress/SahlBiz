@@ -89,8 +89,8 @@ export const ControlPlaneModule: React.FC = () => {
   const [isPinUnlocked, setIsPinUnlocked] = useState(false);
   const [pinError, setPinError] = useState<string | null>(null);
 
-  // Default Master Admin Email check or PIN override (Passkey: 2026 or 1234)
-  const isDefaultMasterEmail = currentUser?.email?.toLowerCase() === 'elbyoutydragopress@gmail.com' || currentUser?.email?.includes('admin');
+  // Default Master Admin check or PIN override (Passkey: 2026 or 1234)
+  const isDefaultMasterEmail = userProfile?.role === 'admin';
   const isUnlocked = isDefaultMasterEmail || isPinUnlocked;
 
   // Active Control Plane Tab

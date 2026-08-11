@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useStore } from '../../context/StoreContext';
+import { useAuth } from '../../context/AuthContext';
 import { Sparkles, Mic, Send, X, Bot, CheckCircle2, Loader2, Volume2 } from 'lucide-react';
 
 interface AiAssistantModalProps {
@@ -8,6 +9,7 @@ interface AiAssistantModalProps {
 
 export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({ onClose }) => {
   const { language, profile, customers, cashSession, products, documents } = useStore();
+  const { currentUser } = useAuth();
 
   const [inputPrompt, setInputPrompt] = useState('');
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
@@ -38,12 +40,22 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({ onClose }) =
     setIsLoading(true);
 
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (currentUser) {
+        try {
+          const token = await currentUser.getIdToken();
+          headers['Authorization'] = `Bearer ${token}`;
+        } catch (tokenErr) {
+          console.warn('Failed to retrieve Firebase ID token:', tokenErr);
+        }
+      }
+
       const response = await fetch('/api/ai/assistant', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           prompt,
-          context: {
+          contextData: {
             businessName: profile.name,
             expectedCash: cashSession.expectedCash,
             kreddyTotal: customers.reduce((s, c) => s + c.kreddyBalance, 0),

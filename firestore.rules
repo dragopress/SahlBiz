@@ -2,102 +2,348 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // ==========================================
+    // 1. GLOBAL PRIMITIVES & SECURITY HELPERS
+    // ==========================================
+
     function isSignedIn() {
       return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        request.auth.token.email == 'elbyoutydragopress@gmail.com' ||
+        request.auth.token.email == 'admin@sahlbiz.ma'
+      );
     }
 
     function isValidId(id) {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
-    function isOrgAccess(data) {
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Checks membership: creator, fallback, subcollection membership, or user document mapping
+    function isOrgMember(orgId) {
       return isSignedIn() && (
-        data.orgId == request.auth.uid ||
-        data.orgId == "org_" + request.auth.uid.slice(0, 8) ||
+        orgId == request.auth.uid ||
+        orgId == "org_" + request.auth.uid.slice(0, 8) ||
+        exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-         data.orgId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.orgId)
+         orgId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.orgId)
       );
     }
 
-    // Default catch-all deny
+    function getUserRole(orgId) {
+      return exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)) ?
+        get(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.get('role', 'owner') :
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) ?
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'owner') :
+          'owner');
+    }
+
+    function isOwnerOrAdmin(orgId) {
+      return isAdmin() || (
+        isOrgMember(orgId) && (
+          getUserRole(orgId) == 'owner' ||
+          getUserRole(orgId) == 'admin'
+        )
+      );
+    }
+
+    function hasPermission(orgId, permission) {
+      return isOwnerOrAdmin(orgId) || (
+        isOrgMember(orgId) && (
+          (permission == 'customer.read' && (getUserRole(orgId) == 'manager' || getUserRole(orgId) == 'accountant' || getUserRole(orgId) == 'cashier' || getUserRole(orgId) == 'salesperson' || getUserRole(orgId) == 'viewer')) ||
+          (permission == 'customer.create' && (getUserRole(orgId) == 'manager' || getUserRole(orgId) == 'cashier' || getUserRole(orgId) == 'salesperson')) ||
+          (permission == 'customer.update' && (getUserRole(orgId) == 'manager')) ||
+          (permission == 'customer.delete' && (getUserRole(orgId) == 'manager')) ||
+          
+          (permission == 'product.read' && (getUserRole(orgId) == 'manager' || getUserRole(orgId) == 'accountant' || getUserRole(orgId) == 'cashier' || getUserRole(orgId) == 'salesperson' || getUserRole(orgId) == 'inventory_manager' || getUserRole(orgId) == 'viewer')) ||
+          (permission == 'product.create' && (getUserRole(orgId) == 'manager' || getUserRole(orgId) == 'inventory_manager')) ||
+          (permission == 'product.update' && (getUserRole(orgId) == 'manager' || getUserRole(orgId) == 'inventory_manager')) ||
+          (permission == 'product.delete' && (getUserRole(orgId) == 'manager' || getUserRole(orgId) == 'inventory_manager')) ||
+          
+          (permission == 'document.read' && (getUserRole(orgId) == 'manager' || getUserRole(orgId) == 'accountant' || getUserRole(orgId) == 'cashier' || getUserRole(orgId) == 'salesperson' || getUserRole(orgId) == 'viewer')) ||
+          (permission == 'document.create' && (getUserRole(orgId) == 'manager' || getUserRole(orgId) == 'accountant' || getUserRole(orgId) == 'salesperson')) ||
+          (permission == 'document.update' && (getUserRole(orgId) == 'manager' || getUserRole(orgId) == 'accountant')) ||
+          (permission == 'document.delete' && (getUserRole(orgId) == 'manager')) ||
+          
+          (permission == 'expense.read' && (getUserRole(orgId) == 'manager' || getUserRole(orgId) == 'accountant' || getUserRole(orgId) == 'viewer')) ||
+          (permission == 'expense.create' && (getUserRole(orgId) == 'manager' || getUserRole(orgId) == 'accountant')) ||
+          (permission == 'expense.update' && (getUserRole(orgId) == 'manager' || getUserRole(orgId) == 'accountant')) ||
+          (permission == 'expense.delete' && (getUserRole(orgId) == 'manager')) ||
+          
+          (permission == 'employee.read' && (getUserRole(orgId) == 'manager' || getUserRole(orgId) == 'hr_manager' || getUserRole(orgId) == 'viewer')) ||
+          (permission == 'employee.create' && (getUserRole(orgId) == 'manager' || getUserRole(orgId) == 'hr_manager')) ||
+          (permission == 'employee.update' && (getUserRole(orgId) == 'manager' || getUserRole(orgId) == 'hr_manager')) ||
+          (permission == 'employee.delete' && (getUserRole(orgId) == 'manager'))
+        )
+      );
+    }
+
+    // ==========================================
+    // 2. SCHEMA VALIDATION BLUEPRINTS
+    // ==========================================
+
+    function isValidBusinessProfile(p) {
+      return p.name is string && p.name.size() > 0 && p.name.size() <= 100 &&
+             p.type is string && (p.type == 'retail' || p.type == 'service' || p.type == 'wholesale' || p.type == 'artisan') &&
+             p.ice is string && p.ice.size() <= 30 &&
+             p.if is string && p.if.size() <= 30 &&
+             p.rc is string && p.rc.size() <= 30 &&
+             p.address is string && p.address.size() <= 300 &&
+             p.city is string && p.city.size() <= 100 &&
+             p.phone is string && p.phone.size() <= 30 &&
+             p.email is string && p.email.size() <= 100 &&
+             p.plan is string && (p.plan == 'free' || p.plan == 'starter' || p.plan == 'pro' || p.plan == 'business') &&
+             p.orgId is string && p.orgId.size() <= 128;
+    }
+
+    function isValidCustomer(c) {
+      return c.id is string && c.id.size() <= 128 &&
+             c.name is string && c.name.size() > 0 && c.name.size() <= 100 &&
+             c.phone is string && c.phone.size() <= 30 &&
+             c.pricingTier is string && (c.pricingTier == 'standard' || c.pricingTier == 'wholesale' || c.pricingTier == 'vip') &&
+             c.creditLimit is number && c.kreddyBalance is number &&
+             c.createdAt is string && c.createdAt.size() <= 40 &&
+             c.orgId is string && c.orgId.size() <= 128;
+    }
+
+    function isValidProduct(p) {
+      return p.id is string && p.id.size() <= 128 &&
+             p.name is string && p.name.size() > 0 && p.name.size() <= 150 &&
+             p.sku is string && p.sku.size() <= 50 &&
+             p.barcode is string && p.barcode.size() <= 50 &&
+             p.category is string && p.category.size() <= 50 &&
+             p.unit is string && (p.unit == 'piece' || p.unit == 'kg' || p.unit == 'liter' || p.unit == 'box' || p.unit == 'carton' || p.unit == 'service') &&
+             p.costPrice is number && p.sellingPrice is number &&
+             p.tvaRate is number && (p.tvaRate == 20 || p.tvaRate == 14 || p.tvaRate == 10 || p.tvaRate == 7 || p.tvaRate == 0) &&
+             p.stockQty is number && p.minStockAlert is number &&
+             p.location is string && (p.location == 'magasin' || p.location == 'depot' || p.location == 'all') &&
+             p.orgId is string && p.orgId.size() <= 128;
+    }
+
+    function isValidSupplier(s) {
+      return s.id is string && s.id.size() <= 128 &&
+             s.name is string && s.name.size() > 0 && s.name.size() <= 100 &&
+             s.phone is string && s.phone.size() <= 30 &&
+             s.category is string && s.category.size() <= 50 &&
+             s.outstandingDebt is number &&
+             s.orgId is string && s.orgId.size() <= 128;
+    }
+
+    function isValidBusinessDocument(d) {
+      return d.id is string && d.id.size() <= 128 &&
+             d.number is string && d.number.size() <= 50 &&
+             d.type is string && (d.type == 'devis' || d.type == 'facture' || d.type == 'bl' || d.type == 'commande') &&
+             d.customerId is string && d.customerId.size() <= 128 &&
+             d.customerName is string && d.customerName.size() <= 100 &&
+             d.date is string && d.date.size() <= 40 &&
+             d.dueDate is string && d.dueDate.size() <= 40 &&
+             d.items is list && d.items.size() <= 100 &&
+             d.subtotalHt is number && d.totalTva is number && d.totalTtc is number &&
+             d.paidAmount is number && d.remainingAmount is number &&
+             d.status is string && (d.status == 'unpaid' || d.status == 'partial' || d.status == 'paid' || d.status == 'overdue') &&
+             d.orgId is string && d.orgId.size() <= 128;
+    }
+
+    function isValidExpense(e) {
+      return e.id is string && e.id.size() <= 128 &&
+             e.title is string && e.title.size() > 0 && e.title.size() <= 150 &&
+             e.category is string && (e.category == 'loyer' || e.category == 'salaires' || e.category == 'matieres' || e.category == 'transport' || e.category == 'electricite' || e.category == 'impots' || e.category == 'entretiens' || e.category == 'divers') &&
+             e.amountHt is number && e.tvaRate is number && e.tvaAmount is number && e.amountTtc is number &&
+             e.date is string && e.date.size() <= 40 &&
+             e.vendorName is string && e.vendorName.size() <= 100 &&
+             e.paymentMethod is string && (e.paymentMethod == 'cash' || e.paymentMethod == 'check' || e.paymentMethod == 'traite' || e.paymentMethod == 'cmi_card' || e.paymentMethod == 'transfer' || e.paymentMethod == 'kreddy') &&
+             e.orgId is string && e.orgId.size() <= 128;
+    }
+
+    function isValidEmployee(emp) {
+      return emp.id is string && emp.id.size() <= 128 &&
+             emp.name is string && emp.name.size() > 0 && emp.name.size() <= 100 &&
+             emp.role is string && emp.role.size() <= 50 &&
+             emp.cin is string && emp.cin.size() <= 15 &&
+             emp.cnssNumber is string && emp.cnssNumber.size() <= 20 &&
+             emp.phone is string && emp.phone.size() <= 30 &&
+             emp.baseSalary is number &&
+             emp.orgId is string && emp.orgId.size() <= 128;
+    }
+
+    // ==========================================
+    // 3. SECURE ACCESS CONTROL PATH RULES
+    // ==========================================
+
+    // Catch-all Default-Deny Security Barrier (Pillar 1)
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // Test connection document
-    match /test/{docId} {
-      allow read, write: if true;
-    }
-
-    // User Accounts & Multi-Tenant Mappings
-    match /users/{userId} {
-      allow read, write: if isSignedIn();
-    }
-
-    // System Config & Control Plane Settings
+    // System Config Collection: Read-Only for Auth users, Admins Write (Pillar 6)
     match /systemConfig/{configId} {
-      allow read, write: if isSignedIn();
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
     }
 
-    // Subscriptions & Payment Transactions
+    // Subscriptions Collection: Client cannot write, Server-managed (Pillar 6)
     match /subscriptions/{subId} {
-      allow read, write: if isSignedIn();
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
     }
 
-    // Business Profiles
+    // Admin Verification Registry
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && adminId == request.auth.uid && isEmailVerified();
+    }
+
+    // User Directory: Strict Profile Ownership + Non-Admin Role/Org Isolation
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow create: if isSignedIn() && request.auth.uid == userId && (
+        incoming().get('role', 'owner') != 'admin' &&
+        isValidId(incoming().orgId)
+      );
+      allow update: if isSignedIn() && (
+        (request.auth.uid == userId && (
+          incoming().get('role', 'owner') == existing().get('role', 'owner') &&
+          incoming().get('orgId', '') == existing().get('orgId', '')
+        )) ||
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    // ==========================================
+    // 4. CANONICAL TENANT-ISOLATED ORGANIZATIONS
+    // ==========================================
+
+    match /organizations/{orgId} {
+      allow read: if isOrgMember(orgId);
+      allow write: if isOwnerOrAdmin(orgId);
+
+      // Members directory within the Tenant boundary
+      match /members/{memberId} {
+        allow read: if isOrgMember(orgId) && (request.auth.uid == memberId || isOwnerOrAdmin(orgId));
+        allow write: if isOwnerOrAdmin(orgId) || (request.auth.uid == memberId && incoming().get('role', 'owner') == existing().get('role', 'owner'));
+      }
+
+      // Business Profile scoped to Tenant
+      match /businessProfiles/{profileId} {
+        allow get: if isOrgMember(orgId);
+        allow list: if isOrgMember(orgId);
+        allow create, update: if isValidId(profileId) && isOwnerOrAdmin(orgId) && isValidBusinessProfile(incoming());
+        allow delete: if isValidId(profileId) && isOwnerOrAdmin(orgId);
+      }
+
+      // Customers scoped to Tenant
+      match /customers/{customerId} {
+        allow get, list: if isOrgMember(orgId) && hasPermission(orgId, 'customer.read');
+        allow create: if isValidId(customerId) && hasPermission(orgId, 'customer.create') && isValidCustomer(incoming());
+        allow update: if isValidId(customerId) && hasPermission(orgId, 'customer.update') && isValidCustomer(incoming());
+        allow delete: if isValidId(customerId) && hasPermission(orgId, 'customer.delete');
+      }
+
+      // Products scoped to Tenant
+      match /products/{productId} {
+        allow get, list: if isOrgMember(orgId) && hasPermission(orgId, 'product.read');
+        allow create: if isValidId(productId) && hasPermission(orgId, 'product.create') && isValidProduct(incoming());
+        allow update: if isValidId(productId) && hasPermission(orgId, 'product.update') && isValidProduct(incoming());
+        allow delete: if isValidId(productId) && hasPermission(orgId, 'product.delete');
+      }
+
+      // Suppliers scoped to Tenant
+      match /suppliers/{supplierId} {
+        allow get, list: if isOrgMember(orgId) && hasPermission(orgId, 'customer.read');
+        allow create: if isValidId(supplierId) && hasPermission(orgId, 'customer.create') && isValidSupplier(incoming());
+        allow update: if isValidId(supplierId) && hasPermission(orgId, 'customer.update') && isValidSupplier(incoming());
+        allow delete: if isValidId(supplierId) && hasPermission(orgId, 'customer.delete');
+      }
+
+      // Documents scoped to Tenant
+      match /documents/{documentId} {
+        allow get, list: if isOrgMember(orgId) && hasPermission(orgId, 'document.read');
+        allow create: if isValidId(documentId) && hasPermission(orgId, 'document.create') && isValidBusinessDocument(incoming());
+        allow update: if isValidId(documentId) && hasPermission(orgId, 'document.update') && isValidBusinessDocument(incoming());
+        allow delete: if isValidId(documentId) && hasPermission(orgId, 'document.delete');
+      }
+
+      // Expenses scoped to Tenant
+      match /expenses/{expenseId} {
+        allow get, list: if isOrgMember(orgId) && hasPermission(orgId, 'expense.read');
+        allow create: if isValidId(expenseId) && hasPermission(orgId, 'expense.create') && isValidExpense(incoming());
+        allow update: if isValidId(expenseId) && hasPermission(orgId, 'expense.update') && isValidExpense(incoming());
+        allow delete: if isValidId(expenseId) && hasPermission(orgId, 'expense.delete');
+      }
+
+      // Employees scoped to Tenant
+      match /employees/{employeeId} {
+        allow get, list: if isOrgMember(orgId) && hasPermission(orgId, 'employee.read');
+        allow create: if isValidId(employeeId) && hasPermission(orgId, 'employee.create') && isValidEmployee(incoming());
+        allow update: if isValidId(employeeId) && hasPermission(orgId, 'employee.update') && isValidEmployee(incoming());
+        allow delete: if isValidId(employeeId) && hasPermission(orgId, 'employee.delete');
+      }
+    }
+
+    // ==========================================
+    // 5. BACKWARD COMPATIBLE FILTER-ENFORCED ROOT
+    // ==========================================
+
+    function isOrgAccess(data) {
+      return isSignedIn() && data.orgId is string && isOrgMember(data.orgId);
+    }
+
     match /businessProfiles/{profileId} {
       allow get, list: if isSignedIn() && (resource == null || isOrgAccess(resource.data));
-      allow create: if isSignedIn() && isValidId(profileId) && isOrgAccess(request.resource.data);
-      allow update: if isSignedIn() && isValidId(profileId) && isOrgAccess(resource.data) && isOrgAccess(request.resource.data);
-      allow delete: if isSignedIn() && isValidId(profileId) && isOrgAccess(resource.data);
+      allow create, update: if isSignedIn() && isValidId(profileId) && isOrgAccess(incoming()) && (resource == null || isOrgAccess(existing())) && isValidBusinessProfile(incoming());
+      allow delete: if isSignedIn() && isValidId(profileId) && (resource == null || isOrgAccess(existing()));
     }
 
-    // Customers Collection
     match /customers/{customerId} {
-      allow get, list: if isSignedIn() && isOrgAccess(resource.data);
-      allow create: if isSignedIn() && isValidId(customerId) && isOrgAccess(request.resource.data);
-      allow update: if isSignedIn() && isValidId(customerId) && isOrgAccess(resource.data) && isOrgAccess(request.resource.data);
-      allow delete: if isSignedIn() && isValidId(customerId) && isOrgAccess(resource.data);
+      allow get, list: if isSignedIn() && (resource == null || isOrgAccess(resource.data));
+      allow create, update: if isSignedIn() && isValidId(customerId) && isOrgAccess(incoming()) && (resource == null || isOrgAccess(existing())) && isValidCustomer(incoming());
+      allow delete: if isSignedIn() && isValidId(customerId) && (resource == null || isOrgAccess(existing()));
     }
 
-    // Products Catalog
     match /products/{productId} {
-      allow get, list: if isSignedIn() && isOrgAccess(resource.data);
-      allow create: if isSignedIn() && isValidId(productId) && isOrgAccess(request.resource.data);
-      allow update: if isSignedIn() && isValidId(productId) && isOrgAccess(resource.data) && isOrgAccess(request.resource.data);
-      allow delete: if isSignedIn() && isValidId(productId) && isOrgAccess(resource.data);
+      allow get, list: if isSignedIn() && (resource == null || isOrgAccess(resource.data));
+      allow create, update: if isSignedIn() && isValidId(productId) && isOrgAccess(incoming()) && (resource == null || isOrgAccess(existing())) && isValidProduct(incoming());
+      allow delete: if isSignedIn() && isValidId(productId) && (resource == null || isOrgAccess(existing()));
     }
 
-    // Suppliers Collection
     match /suppliers/{supplierId} {
-      allow get, list: if isSignedIn() && isOrgAccess(resource.data);
-      allow create: if isSignedIn() && isValidId(supplierId) && isOrgAccess(request.resource.data);
-      allow update: if isSignedIn() && isValidId(supplierId) && isOrgAccess(resource.data) && isOrgAccess(request.resource.data);
-      allow delete: if isSignedIn() && isValidId(supplierId) && isOrgAccess(resource.data);
+      allow get, list: if isSignedIn() && (resource == null || isOrgAccess(resource.data));
+      allow create, update: if isSignedIn() && isValidId(supplierId) && isOrgAccess(incoming()) && (resource == null || isOrgAccess(existing())) && isValidSupplier(incoming());
+      allow delete: if isSignedIn() && isValidId(supplierId) && (resource == null || isOrgAccess(existing()));
     }
 
-    // Business Documents (Invoices, Devis, BL, Commandes)
     match /documents/{documentId} {
-      allow get, list: if isSignedIn() && isOrgAccess(resource.data);
-      allow create: if isSignedIn() && isValidId(documentId) && isOrgAccess(request.resource.data);
-      allow update: if isSignedIn() && isValidId(documentId) && isOrgAccess(resource.data) && isOrgAccess(request.resource.data);
-      allow delete: if isSignedIn() && isValidId(documentId) && isOrgAccess(resource.data);
+      allow get, list: if isSignedIn() && (resource == null || isOrgAccess(resource.data));
+      allow create, update: if isSignedIn() && isValidId(documentId) && isOrgAccess(incoming()) && (resource == null || isOrgAccess(existing())) && isValidBusinessDocument(incoming());
+      allow delete: if isSignedIn() && isValidId(documentId) && (resource == null || isOrgAccess(existing()));
     }
 
-    // Expenses Collection
     match /expenses/{expenseId} {
-      allow get, list: if isSignedIn() && isOrgAccess(resource.data);
-      allow create: if isSignedIn() && isValidId(expenseId) && isOrgAccess(request.resource.data);
-      allow update: if isSignedIn() && isValidId(expenseId) && isOrgAccess(resource.data) && isOrgAccess(request.resource.data);
-      allow delete: if isSignedIn() && isValidId(expenseId) && isOrgAccess(resource.data);
+      allow get, list: if isSignedIn() && (resource == null || isOrgAccess(resource.data));
+      allow create, update: if isSignedIn() && isValidId(expenseId) && isOrgAccess(incoming()) && (resource == null || isOrgAccess(existing())) && isValidExpense(incoming());
+      allow delete: if isSignedIn() && isValidId(expenseId) && (resource == null || isOrgAccess(existing()));
     }
 
-    // Employees Directory
     match /employees/{employeeId} {
-      allow get, list: if isSignedIn() && isOrgAccess(resource.data);
-      allow create: if isSignedIn() && isValidId(employeeId) && isOrgAccess(request.resource.data);
-      allow update: if isSignedIn() && isValidId(employeeId) && isOrgAccess(resource.data) && isOrgAccess(request.resource.data);
-      allow delete: if isSignedIn() && isValidId(employeeId) && isOrgAccess(resource.data);
+      allow get, list: if isSignedIn() && (resource == null || isOrgAccess(resource.data));
+      allow create, update: if isSignedIn() && isValidId(employeeId) && isOrgAccess(incoming()) && (resource == null || isOrgAccess(existing())) && isValidEmployee(incoming());
+      allow delete: if isSignedIn() && isValidId(employeeId) && (resource == null || isOrgAccess(existing()));
     }
   }
 }

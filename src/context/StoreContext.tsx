@@ -41,7 +41,7 @@ import {
   INITIAL_PAYSLIPS,
   INITIAL_CASH_SESSION
 } from '../data/mockData';
-import { calculateTva, calculateDroitDeTimbre } from '../lib/moroccanTax';
+import { calculateTva, calculateDroitDeTimbre, recalculateDocumentTotals } from '../lib/moroccanTax';
 import {
   queueOfflineSale,
   queueOfflineInventoryUpdate,
@@ -247,15 +247,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Redirect to correct module based on user credentials (accreditation) upon successful login
   useEffect(() => {
-    if (currentUser) {
-      const emailLower = currentUser.email?.toLowerCase() || '';
-      if (emailLower === 'elbyoutydragopress@gmail.com' || emailLower.includes('admin')) {
+    if (currentUser && userProfile) {
+      if (userProfile.role === 'admin') {
         setActiveModule('admin');
       } else {
         setActiveModule('dashboard');
       }
     }
-  }, [currentUser]);
+  }, [currentUser, userProfile]);
 
   // Save state on change
   useEffect(() => {
@@ -301,7 +300,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const deleteCustomer = (id: string) => {
     setCustomers(prev => prev.filter(c => c.id !== id));
-    deleteCustomerFromFirestore(id);
+    deleteCustomerFromFirestore(id, orgId);
   };
 
   const adjustKreddyBalance = (customerId: string, amountChange: number) => {
@@ -334,7 +333,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const deleteProduct = (id: string) => {
     setProducts(prev => prev.filter(p => p.id !== id));
-    deleteProductFromFirestore(id);
+    deleteProductFromFirestore(id, orgId);
   };
 
   const addSupplier = (suppData: Omit<Supplier, 'id' | 'outstandingDebt'>) => {
@@ -357,10 +356,19 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const numSeq = Math.floor(100 + Math.random() * 900);
     const newNum = `${prefix}-2026-${numSeq}`;
 
+    // Authoritative calculation of financial metrics
+    const totals = recalculateDocumentTotals(docData.items, docData.paymentMethod, docData.paidAmount);
+
     const newDoc: BusinessDocument = {
       ...docData,
       id: `doc-${Date.now()}`,
       number: newNum,
+      subtotalHt: totals.subtotalHt,
+      totalTva: totals.totalTva,
+      droitDeTimbre: totals.droitDeTimbre,
+      totalTtc: totals.totalTtc,
+      remainingAmount: totals.remainingAmount,
+      status: totals.remainingAmount <= 0 ? 'paid' : docData.paidAmount > 0 ? 'partial' : 'unpaid'
     };
 
     setDocuments(prev => [newDoc, ...prev]);
@@ -377,6 +385,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (!devis) return;
 
     const numSeq = Math.floor(100 + Math.random() * 900);
+    const totals = recalculateDocumentTotals(devis.items, devis.paymentMethod, 0);
+
     const newInvoice: BusinessDocument = {
       ...devis,
       id: `doc-${Date.now()}`,
@@ -387,7 +397,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       dueDate: new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
       status: 'unpaid',
       paidAmount: 0,
-      remainingAmount: devis.totalTtc,
+      subtotalHt: totals.subtotalHt,
+      totalTva: totals.totalTva,
+      droitDeTimbre: totals.droitDeTimbre,
+      totalTtc: totals.totalTtc,
+      remainingAmount: totals.totalTtc,
     };
 
     setDocuments(prev => [newInvoice, ...prev]);
@@ -436,7 +450,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const deleteExpense = (id: string) => {
     setExpenses(prev => prev.filter(e => e.id !== id));
-    deleteExpenseFromFirestore(id);
+    deleteExpenseFromFirestore(id, orgId);
   };
 
   // Autogenerate recurring expenses that are due

@@ -70,6 +70,119 @@ export function formatMad(amount: number, showSymbol = true): string {
   return showSymbol ? `${formatted} MAD` : formatted;
 }
 
+export function recalculateDocumentTotals(
+  items: { quantity: number; unitPriceHt: number; tvaRate: number }[],
+  paymentMethod?: string,
+  paidAmount = 0
+): {
+  subtotalHt: number;
+  totalTva: number;
+  droitDeTimbre: number;
+  totalTtc: number;
+  remainingAmount: number;
+} {
+  let subtotalHt = 0;
+  let totalTva = 0;
+
+  items.forEach(item => {
+    const totalHt = Number((item.quantity * item.unitPriceHt).toFixed(2));
+    const totalTvaItem = Number((totalHt * (item.tvaRate / 100)).toFixed(2));
+    subtotalHt += totalHt;
+    totalTva += totalTvaItem;
+  });
+
+  subtotalHt = Number(subtotalHt.toFixed(2));
+  totalTva = Number(totalTva.toFixed(2));
+  const rawTtc = Number((subtotalHt + totalTva).toFixed(2));
+
+  // 0.25% stamp duty for cash payment
+  const droitDeTimbre = paymentMethod === 'cash' ? Number((rawTtc * 0.0025).toFixed(2)) : 0;
+  const totalTtc = Number((rawTtc + droitDeTimbre).toFixed(2));
+  const remainingAmount = Number((totalTtc - paidAmount).toFixed(2));
+
+  return {
+    subtotalHt,
+    totalTva,
+    droitDeTimbre,
+    totalTtc,
+    remainingAmount: remainingAmount > 0 ? remainingAmount : 0
+  };
+}
+
+export interface PayslipResult {
+  baseSalary: number;
+  cnssEmployee: number;
+  amoEmployee: number;
+  igrAmount: number;
+  netSalary: number;
+  cnssEmployer: number;
+  amoEmployer: number;
+  employerTotalCharges: number;
+  totalCostToCompany: number;
+}
+
+export function calculateMoroccanPayroll(baseSalary: number): PayslipResult {
+  // CNSS & AMO Employee Deductions
+  const cnssEmployeeRate = 0.0448; // 4.48%
+  const amoEmployeeRate = 0.0226; // 2.26%
+
+  const cnssEmployee = Number((baseSalary * cnssEmployeeRate).toFixed(2));
+  const amoEmployee = Number((baseSalary * amoEmployeeRate).toFixed(2));
+
+  // Taxable salary for IGR: Base salary - social contributions (CNSS + AMO)
+  const taxableSalary = baseSalary - cnssEmployee - amoEmployee;
+
+  // IGR monthly brackets
+  let igrRate = 0;
+  let deduction = 0;
+
+  if (taxableSalary <= 2500) {
+    igrRate = 0;
+    deduction = 0;
+  } else if (taxableSalary <= 4166.67) {
+    igrRate = 0.10;
+    deduction = 250;
+  } else if (taxableSalary <= 5000) {
+    igrRate = 0.20;
+    deduction = 666.67;
+  } else if (taxableSalary <= 6666.67) {
+    igrRate = 0.30;
+    deduction = 1166.67;
+  } else if (taxableSalary <= 15000) {
+    igrRate = 0.34;
+    deduction = 1433.33;
+  } else {
+    igrRate = 0.38;
+    deduction = 2033.33;
+  }
+
+  let igrAmount = Number(((taxableSalary * igrRate) - deduction).toFixed(2));
+  if (igrAmount < 0) igrAmount = 0;
+
+  const netSalary = Number((baseSalary - cnssEmployee - amoEmployee - igrAmount).toFixed(2));
+
+  // Employer Charges
+  const cnssEmployerRate = 0.2010; // 20.10%
+  const amoEmployerRate = 0.0411; // 4.11%
+
+  const cnssEmployer = Number((baseSalary * cnssEmployerRate).toFixed(2));
+  const amoEmployer = Number((baseSalary * amoEmployerRate).toFixed(2));
+  const employerTotalCharges = Number((cnssEmployer + amoEmployer).toFixed(2));
+  const totalCostToCompany = Number((baseSalary + employerTotalCharges).toFixed(2));
+
+  return {
+    baseSalary,
+    cnssEmployee,
+    amoEmployee,
+    igrAmount,
+    netSalary,
+    cnssEmployer,
+    amoEmployer,
+    employerTotalCharges,
+    totalCostToCompany
+  };
+}
+
 export const PCGM_ACCOUNTS = {
   CLIENTS: '34210000',
   FOURNISSEURS: '44110000',

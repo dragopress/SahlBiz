@@ -10,9 +10,21 @@
         "displayName": { "type": "string", "maxLength": 100 },
         "orgId": { "type": "string", "maxLength": 128 },
         "orgName": { "type": "string", "maxLength": 100 },
-        "createdAt": { "type": "string", "maxLength": 30 }
+        "createdAt": { "type": "string", "maxLength": 30 },
+        "role": { "type": "string", "maxLength": 30 }
       },
       "required": ["uid", "email", "orgId", "orgName"]
+    },
+    "Admin": {
+      "title": "Admin",
+      "description": "Server-side administrator list document",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "maxLength": 100 },
+        "role": { "type": "string", "maxLength": 30 },
+        "verifiedAt": { "type": "string", "maxLength": 30 }
+      },
+      "required": ["email", "role"]
     },
     "BusinessProfile": {
       "title": "BusinessProfile",
@@ -157,33 +169,50 @@
       "schema": { "$ref": "#/entities/User" },
       "description": "User accounts and organization multi-tenancy mappings"
     },
-    "/businessProfiles/{profileId}": {
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/Admin" },
+      "description": "Server-side validated administrator list"
+    },
+    "/organizations/{orgId}": {
+      "description": "Organizational root tenants with subcollection isolation",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "createdAt": { "type": "string" }
+      }
+    },
+    "/organizations/{orgId}/members/{userId}": {
+      "description": "Organization membership records mapped to user IDs",
+      "schema": { "$ref": "#/entities/User" }
+    },
+    "/organizations/{orgId}/businessProfiles/{profileId}": {
       "schema": { "$ref": "#/entities/BusinessProfile" },
-      "description": "Business profile settings"
+      "description": "Business profile settings scoped to tenant"
     },
-    "/customers/{customerId}": {
+    "/organizations/{orgId}/customers/{customerId}": {
       "schema": { "$ref": "#/entities/Customer" },
-      "description": "Customers list"
+      "description": "Customers list scoped to tenant"
     },
-    "/products/{productId}": {
+    "/organizations/{orgId}/products/{productId}": {
       "schema": { "$ref": "#/entities/Product" },
-      "description": "Products catalog"
+      "description": "Products catalog scoped to tenant"
     },
-    "/suppliers/{supplierId}": {
+    "/organizations/{orgId}/suppliers/{supplierId}": {
       "schema": { "$ref": "#/entities/Supplier" },
-      "description": "Suppliers list"
+      "description": "Suppliers list scoped to tenant"
     },
-    "/documents/{documentId}": {
+    "/organizations/{orgId}/documents/{documentId}": {
       "schema": { "$ref": "#/entities/BusinessDocument" },
-      "description": "Business invoices and devis documents"
+      "description": "Business invoices and devis documents scoped to tenant"
     },
-    "/expenses/{expenseId}": {
+    "/organizations/{orgId}/expenses/{expenseId}": {
       "schema": { "$ref": "#/entities/Expense" },
-      "description": "Business expenses"
+      "description": "Business expenses scoped to tenant"
     },
-    "/employees/{employeeId}": {
+    "/organizations/{orgId}/employees/{employeeId}": {
       "schema": { "$ref": "#/entities/Employee" },
-      "description": "Employee directory"
+      "description": "Employee directory scoped to tenant"
     }
   }
 }

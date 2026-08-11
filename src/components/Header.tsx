@@ -47,9 +47,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenAiAssistant, onOpenPricing
     triggerManualSync
   } = useStore();
 
-  const userEmail = currentUser?.email || userProfile?.email || '';
-  const emailLower = userEmail.toLowerCase();
-  const isAdmin = emailLower === 'elbyoutydragopress@gmail.com' || emailLower.includes('admin') || emailLower === 'admin@sahlbiz.ma';
+  const isAdmin = userProfile?.role === 'admin';
 
   const languages: { code: Language; label: string; flag: string }[] = [
     { code: 'fr', label: 'Français', flag: '🇲🇦' },

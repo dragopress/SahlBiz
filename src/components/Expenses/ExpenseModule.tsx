@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useStore } from '../../context/StoreContext';
+import { useAuth } from '../../context/AuthContext';
 import { Expense, ExpenseCategory, TvaRate } from '../../types';
 import { formatMad } from '../../lib/moroccanTax';
 import { TaxSettings } from '../Common/TaxSettings';
@@ -21,6 +22,7 @@ import {
 
 export const ExpenseModule: React.FC = () => {
   const { expenses, addExpense, updateExpense } = useStore();
+  const { currentUser } = useAuth();
 
   const [activeTab, setActiveTab] = useState<'all' | 'recurring'>('all');
   const [searchTerm, setSearchTerm] = useState('');
@@ -62,10 +64,20 @@ export const ExpenseModule: React.FC = () => {
       reader.onload = async (evt) => {
         const base64Data = evt.target?.result as string;
 
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (currentUser) {
+          try {
+            const token = await currentUser.getIdToken();
+            headers['Authorization'] = `Bearer ${token}`;
+          } catch (tokenErr) {
+            console.warn('Failed to retrieve Firebase ID token for OCR:', tokenErr);
+          }
+        }
+
         // Call server side OCR endpoint
         const response = await fetch('/api/ai/ocr', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({
             image: base64Data,
             mimeType: file.type || 'image/jpeg'

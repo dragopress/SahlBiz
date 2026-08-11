@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { Employee } from '../../types';
-import { formatMad } from '../../lib/moroccanTax';
+import { formatMad, calculateMoroccanPayroll } from '../../lib/moroccanTax';
 import {
   Briefcase,
   Plus,
@@ -189,26 +189,54 @@ export const EmployeeModule: React.FC = () => {
             </div>
 
             {/* Payslip Calculations */}
-            <div className="space-y-2 text-xs font-mono border border-slate-200 rounded-xl p-3 bg-slate-50">
-              <div className="flex justify-between">
-                <span>Salaire Brut de Base:</span>
-                <span className="font-bold">{formatMad(selectedPayslipEmp.baseSalary)}</span>
-              </div>
-              <div className="flex justify-between text-red-600 text-[11px]">
-                <span>- Cotisation CNSS Salarié (3.96%):</span>
-                <span>-{formatMad(selectedPayslipEmp.baseSalary * 0.0396)}</span>
-              </div>
-              <div className="flex justify-between text-red-600 text-[11px]">
-                <span>- AMO Salarié (2.26%):</span>
-                <span>-{formatMad(selectedPayslipEmp.baseSalary * 0.0226)}</span>
-              </div>
-              <div className="border-t border-slate-300 pt-2 flex justify-between font-bold text-sm text-slate-900">
-                <span>NET À PAYER SALARIÉ:</span>
-                <span className="text-emerald-700">
-                  {formatMad(selectedPayslipEmp.baseSalary * (1 - 0.0396 - 0.0226))}
-                </span>
-              </div>
-            </div>
+            {(() => {
+              const payroll = calculateMoroccanPayroll(selectedPayslipEmp.baseSalary);
+              return (
+                <div className="space-y-2 text-xs font-mono border border-slate-200 rounded-xl p-3 bg-slate-50">
+                  <div className="flex justify-between">
+                    <span>Salaire Brut de Base:</span>
+                    <span className="font-bold">{formatMad(payroll.baseSalary)}</span>
+                  </div>
+                  <div className="flex justify-between text-red-600 text-[11px]">
+                    <span>- Cotisation CNSS Salarié (4.48%):</span>
+                    <span>-{formatMad(payroll.cnssEmployee)}</span>
+                  </div>
+                  <div className="flex justify-between text-red-600 text-[11px]">
+                    <span>- AMO Salarié (2.26%):</span>
+                    <span>-{formatMad(payroll.amoEmployee)}</span>
+                  </div>
+                  {payroll.igrAmount > 0 && (
+                    <div className="flex justify-between text-red-600 text-[11px]">
+                      <span>- Impôt sur le Revenu (IGR):</span>
+                      <span>-{formatMad(payroll.igrAmount)}</span>
+                    </div>
+                  )}
+                  <div className="border-t border-slate-300 pt-2 flex justify-between font-bold text-sm text-slate-900">
+                    <span>NET À PAYER SALARIÉ:</span>
+                    <span className="text-emerald-700">
+                      {formatMad(payroll.netSalary)}
+                    </span>
+                  </div>
+                  
+                  {/* Employer Contributions & Cost transparency for SMBs */}
+                  <div className="border-t border-dashed border-slate-300 mt-2 pt-2 text-[10px] text-slate-500 space-y-1">
+                    <div className="font-bold text-slate-700">Charges Patronales (Employeur) :</div>
+                    <div className="flex justify-between">
+                      <span>Cotisation CNSS Patronale (20.10%):</span>
+                      <span>{formatMad(payroll.cnssEmployer)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Cotisation AMO Patronale (4.11%):</span>
+                      <span>{formatMad(payroll.amoEmployer)}</span>
+                    </div>
+                    <div className="flex justify-between border-t border-slate-200 pt-1 font-bold text-slate-600">
+                      <span>Total Coût pour l'Entreprise:</span>
+                      <span>{formatMad(payroll.totalCostToCompany)}</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             <div className="flex justify-between items-center pt-2">
               <span className="text-[10px] text-slate-500 italic">Conforme au Code du Travail Marocain</span>
