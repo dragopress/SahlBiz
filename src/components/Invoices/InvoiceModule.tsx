@@ -33,7 +33,9 @@ export const InvoiceModule: React.FC = () => {
     recordDocumentPayment,
     openWhatsAppModal,
     selectedDocumentForView,
-    setSelectedDocumentForView
+    setSelectedDocumentForView,
+    isLoadingInitialData,
+    isSaving
   } = useStore();
 
   const todayStr = new Date().toISOString().split('T')[0];
@@ -343,7 +345,34 @@ export const InvoiceModule: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {filteredDocs.length === 0 ? (
+              {isLoadingInitialData ? (
+                Array.from({ length: 5 }).map((_, index) => (
+                  <tr key={index} className="animate-pulse">
+                    <td className="p-3.5">
+                      <div className="h-4 bg-slate-800 rounded w-2/3 mb-1.5"></div>
+                      <div className="h-3 bg-slate-800/50 rounded w-1/3"></div>
+                    </td>
+                    <td className="p-3.5">
+                      <div className="h-4 bg-slate-800 rounded w-1/2 mb-1.5"></div>
+                      <div className="h-3 bg-slate-800/50 rounded w-1/4"></div>
+                    </td>
+                    <td className="p-3.5">
+                      <div className="h-4 bg-slate-800 rounded w-20 mb-1.5"></div>
+                      <div className="h-3 bg-slate-800/50 rounded w-16"></div>
+                    </td>
+                    <td className="p-3.5 text-right">
+                      <div className="h-4 bg-slate-800 rounded w-20 ml-auto mb-1.5"></div>
+                      <div className="h-3 bg-slate-800/50 rounded w-12 ml-auto"></div>
+                    </td>
+                    <td className="p-3.5 text-center">
+                      <div className="h-6 bg-slate-800 rounded w-24 mx-auto"></div>
+                    </td>
+                    <td className="p-3.5 text-center">
+                      <div className="h-8 bg-slate-800 rounded w-20 mx-auto"></div>
+                    </td>
+                  </tr>
+                ))
+              ) : filteredDocs.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="p-8 text-center text-slate-500 text-xs">
                     Aucun document trouvé pour ces critères.
@@ -727,10 +756,16 @@ export const InvoiceModule: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  disabled={items.length === 0}
-                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium"
+                  disabled={items.length === 0 || isSaving}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium flex items-center gap-2"
                 >
-                  Valider & Générer Document
+                  {isSaving && (
+                    <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                  )}
+                  <span>{isSaving ? 'Génération...' : 'Valider & Générer Document'}</span>
                 </button>
               </div>
             </form>

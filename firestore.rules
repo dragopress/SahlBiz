@@ -230,69 +230,81 @@ service cloud.firestore {
     // ==========================================
 
     match /organizations/{orgId} {
-      allow read: if isOrgMember(orgId);
-      allow write: if isOwnerOrAdmin(orgId);
+      allow read: if isValidId(orgId) && isOrgMember(orgId);
+      allow write: if isValidId(orgId) && isOwnerOrAdmin(orgId);
 
-      // Members directory within the Tenant boundary
+      // Members directory: strictly validates membership, owner/admin role, and matching tenant orgId
       match /members/{memberId} {
-        allow read: if isOrgMember(orgId) && (request.auth.uid == memberId || isOwnerOrAdmin(orgId));
-        allow write: if isOwnerOrAdmin(orgId) || (request.auth.uid == memberId && incoming().get('role', 'owner') == existing().get('role', 'owner'));
+        allow get: if isValidId(orgId) && isValidId(memberId) && isOrgMember(orgId) && (request.auth.uid == memberId || isOwnerOrAdmin(orgId));
+        allow list: if isValidId(orgId) && isOrgMember(orgId) && isOwnerOrAdmin(orgId);
+        allow create: if isValidId(orgId) && isValidId(memberId) && isOwnerOrAdmin(orgId) && incoming().orgId == orgId;
+        allow update: if isValidId(orgId) && isValidId(memberId) && incoming().orgId == orgId && (
+          isOwnerOrAdmin(orgId) || 
+          (request.auth.uid == memberId && incoming().get('role', 'owner') == existing().get('role', 'owner'))
+        );
+        allow delete: if isValidId(orgId) && isValidId(memberId) && isOwnerOrAdmin(orgId);
       }
 
-      // Business Profile scoped to Tenant
+      // Business Profile: strictly validates membership, owner/admin role, and matching tenant orgId
       match /businessProfiles/{profileId} {
-        allow get: if isOrgMember(orgId);
-        allow list: if isOrgMember(orgId);
-        allow create, update: if isValidId(profileId) && isOwnerOrAdmin(orgId) && isValidBusinessProfile(incoming());
-        allow delete: if isValidId(profileId) && isOwnerOrAdmin(orgId);
+        allow get: if isValidId(orgId) && isValidId(profileId) && isOrgMember(orgId);
+        allow list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create, update: if isValidId(orgId) && isValidId(profileId) && isOwnerOrAdmin(orgId) && incoming().orgId == orgId && isValidBusinessProfile(incoming());
+        allow delete: if isValidId(orgId) && isValidId(profileId) && isOwnerOrAdmin(orgId);
       }
 
-      // Customers scoped to Tenant
+      // Customers: strictly validates membership, 'customer' roles/permissions, and matching tenant orgId
       match /customers/{customerId} {
-        allow get, list: if isOrgMember(orgId) && hasPermission(orgId, 'customer.read');
-        allow create: if isValidId(customerId) && hasPermission(orgId, 'customer.create') && isValidCustomer(incoming());
-        allow update: if isValidId(customerId) && hasPermission(orgId, 'customer.update') && isValidCustomer(incoming());
-        allow delete: if isValidId(customerId) && hasPermission(orgId, 'customer.delete');
+        allow get: if isValidId(orgId) && isValidId(customerId) && isOrgMember(orgId) && hasPermission(orgId, 'customer.read');
+        allow list: if isValidId(orgId) && isOrgMember(orgId) && hasPermission(orgId, 'customer.read') && resource.data.orgId == orgId;
+        allow create: if isValidId(orgId) && isValidId(customerId) && hasPermission(orgId, 'customer.create') && incoming().orgId == orgId && isValidCustomer(incoming());
+        allow update: if isValidId(orgId) && isValidId(customerId) && hasPermission(orgId, 'customer.update') && incoming().orgId == orgId && isValidCustomer(incoming());
+        allow delete: if isValidId(orgId) && isValidId(customerId) && hasPermission(orgId, 'customer.delete');
       }
 
-      // Products scoped to Tenant
+      // Products: strictly validates membership, 'product' roles/permissions, and matching tenant orgId
       match /products/{productId} {
-        allow get, list: if isOrgMember(orgId) && hasPermission(orgId, 'product.read');
-        allow create: if isValidId(productId) && hasPermission(orgId, 'product.create') && isValidProduct(incoming());
-        allow update: if isValidId(productId) && hasPermission(orgId, 'product.update') && isValidProduct(incoming());
-        allow delete: if isValidId(productId) && hasPermission(orgId, 'product.delete');
+        allow get: if isValidId(orgId) && isValidId(productId) && isOrgMember(orgId) && hasPermission(orgId, 'product.read');
+        allow list: if isValidId(orgId) && isOrgMember(orgId) && hasPermission(orgId, 'product.read') && resource.data.orgId == orgId;
+        allow create: if isValidId(orgId) && isValidId(productId) && hasPermission(orgId, 'product.create') && incoming().orgId == orgId && isValidProduct(incoming());
+        allow update: if isValidId(orgId) && isValidId(productId) && hasPermission(orgId, 'product.update') && incoming().orgId == orgId && isValidProduct(incoming());
+        allow delete: if isValidId(orgId) && isValidId(productId) && hasPermission(orgId, 'product.delete');
       }
 
-      // Suppliers scoped to Tenant
+      // Suppliers: strictly validates membership, 'customer/supplier' roles/permissions, and matching tenant orgId
       match /suppliers/{supplierId} {
-        allow get, list: if isOrgMember(orgId) && hasPermission(orgId, 'customer.read');
-        allow create: if isValidId(supplierId) && hasPermission(orgId, 'customer.create') && isValidSupplier(incoming());
-        allow update: if isValidId(supplierId) && hasPermission(orgId, 'customer.update') && isValidSupplier(incoming());
-        allow delete: if isValidId(supplierId) && hasPermission(orgId, 'customer.delete');
+        allow get: if isValidId(orgId) && isValidId(supplierId) && isOrgMember(orgId) && hasPermission(orgId, 'customer.read');
+        allow list: if isValidId(orgId) && isOrgMember(orgId) && hasPermission(orgId, 'customer.read') && resource.data.orgId == orgId;
+        allow create: if isValidId(orgId) && isValidId(supplierId) && hasPermission(orgId, 'customer.create') && incoming().orgId == orgId && isValidSupplier(incoming());
+        allow update: if isValidId(orgId) && isValidId(supplierId) && hasPermission(orgId, 'customer.update') && incoming().orgId == orgId && isValidSupplier(incoming());
+        allow delete: if isValidId(orgId) && isValidId(supplierId) && hasPermission(orgId, 'customer.delete');
       }
 
-      // Documents scoped to Tenant
+      // Documents: strictly validates membership, 'document' roles/permissions, and matching tenant orgId
       match /documents/{documentId} {
-        allow get, list: if isOrgMember(orgId) && hasPermission(orgId, 'document.read');
-        allow create: if isValidId(documentId) && hasPermission(orgId, 'document.create') && isValidBusinessDocument(incoming());
-        allow update: if isValidId(documentId) && hasPermission(orgId, 'document.update') && isValidBusinessDocument(incoming());
-        allow delete: if isValidId(documentId) && hasPermission(orgId, 'document.delete');
+        allow get: if isValidId(orgId) && isValidId(documentId) && isOrgMember(orgId) && hasPermission(orgId, 'document.read');
+        allow list: if isValidId(orgId) && isOrgMember(orgId) && hasPermission(orgId, 'document.read') && resource.data.orgId == orgId;
+        allow create: if isValidId(orgId) && isValidId(documentId) && hasPermission(orgId, 'document.create') && incoming().orgId == orgId && isValidBusinessDocument(incoming());
+        allow update: if isValidId(orgId) && isValidId(documentId) && hasPermission(orgId, 'document.update') && incoming().orgId == orgId && isValidBusinessDocument(incoming());
+        allow delete: if isValidId(orgId) && isValidId(documentId) && hasPermission(orgId, 'document.delete');
       }
 
-      // Expenses scoped to Tenant
+      // Expenses: strictly validates membership, 'expense' roles/permissions, and matching tenant orgId
       match /expenses/{expenseId} {
-        allow get, list: if isOrgMember(orgId) && hasPermission(orgId, 'expense.read');
-        allow create: if isValidId(expenseId) && hasPermission(orgId, 'expense.create') && isValidExpense(incoming());
-        allow update: if isValidId(expenseId) && hasPermission(orgId, 'expense.update') && isValidExpense(incoming());
-        allow delete: if isValidId(expenseId) && hasPermission(orgId, 'expense.delete');
+        allow get: if isValidId(orgId) && isValidId(expenseId) && isOrgMember(orgId) && hasPermission(orgId, 'expense.read');
+        allow list: if isValidId(orgId) && isOrgMember(orgId) && hasPermission(orgId, 'expense.read') && resource.data.orgId == orgId;
+        allow create: if isValidId(orgId) && isValidId(expenseId) && hasPermission(orgId, 'expense.create') && incoming().orgId == orgId && isValidExpense(incoming());
+        allow update: if isValidId(orgId) && isValidId(expenseId) && hasPermission(orgId, 'expense.update') && incoming().orgId == orgId && isValidExpense(incoming());
+        allow delete: if isValidId(orgId) && isValidId(expenseId) && hasPermission(orgId, 'expense.delete');
       }
 
-      // Employees scoped to Tenant
+      // Employees: strictly validates membership, 'employee' roles/permissions, and matching tenant orgId
       match /employees/{employeeId} {
-        allow get, list: if isOrgMember(orgId) && hasPermission(orgId, 'employee.read');
-        allow create: if isValidId(employeeId) && hasPermission(orgId, 'employee.create') && isValidEmployee(incoming());
-        allow update: if isValidId(employeeId) && hasPermission(orgId, 'employee.update') && isValidEmployee(incoming());
-        allow delete: if isValidId(employeeId) && hasPermission(orgId, 'employee.delete');
+        allow get: if isValidId(orgId) && isValidId(employeeId) && isOrgMember(orgId) && hasPermission(orgId, 'employee.read');
+        allow list: if isValidId(orgId) && isOrgMember(orgId) && hasPermission(orgId, 'employee.read') && resource.data.orgId == orgId;
+        allow create: if isValidId(orgId) && isValidId(employeeId) && hasPermission(orgId, 'employee.create') && incoming().orgId == orgId && isValidEmployee(incoming());
+        allow update: if isValidId(orgId) && isValidId(employeeId) && hasPermission(orgId, 'employee.update') && incoming().orgId == orgId && isValidEmployee(incoming());
+        allow delete: if isValidId(orgId) && isValidId(employeeId) && hasPermission(orgId, 'employee.delete');
       }
     }
 

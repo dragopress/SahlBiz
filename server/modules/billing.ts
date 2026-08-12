@@ -1,6 +1,8 @@
 import express from "express";
 import { z } from "zod";
 import { Sale, Invoice, Payment } from "../types";
+import { validateRequest } from "../middleware/validation";
+import { requireIdempotency } from "../middleware/idempotency";
 
 export const billingRouter = express.Router();
 
@@ -11,13 +13,13 @@ const saleSchema = z.object({
   items: z.array(z.object({
     productId: z.string(),
     productName: z.string(),
-    quantity: z.number().positive(),
-    unitPrice: z.number().nonnegative(),
+    quantity: z.number().positive("Quantity must be greater than zero"),
+    unitPrice: z.number().nonnegative("Unit price cannot be negative"),
     tvaRate: z.number().default(20),
     discount: z.number().default(0)
-  })).min(1),
+  })).min(1, "A sale must include at least one item"),
   paymentMethod: z.enum(["cash", "check", "traite", "cmi_card", "transfer", "kreddy"]),
-  amountPaid: z.number().nonnegative()
+  amountPaid: z.number().nonnegative("Amount paid cannot be negative")
 });
 
 const invoiceSchema = z.object({
@@ -27,18 +29,18 @@ const invoiceSchema = z.object({
   items: z.array(z.object({
     productId: z.string(),
     productName: z.string(),
-    quantity: z.number().positive(),
-    unitPrice: z.number().nonnegative(),
+    quantity: z.number().positive("Quantity must be greater than zero"),
+    unitPrice: z.number().nonnegative("Unit price cannot be negative"),
     tvaRate: z.number().default(20),
     discount: z.number().default(0)
-  })).min(1),
+  })).min(1, "An invoice must include at least one item"),
   type: z.enum(["devis", "facture", "bl", "commande"]).default("facture")
 });
 
 const paymentSchema = z.object({
   entityType: z.enum(["sale", "invoice", "expense", "purchase", "kreddy"]),
   entityId: z.string(),
-  amount: z.number().positive(),
+  amount: z.number().positive("Payment amount must be greater than zero"),
   method: z.enum(["cash", "check", "traite", "cmi_card", "transfer", "kreddy"]),
   reference: z.string().optional()
 });
@@ -172,7 +174,7 @@ export class BillingService {
     list.push(newPayment);
     this.payments.set(orgId, list);
 
-    // Dynamic adjustment of invoice payment status if appropriate
+    // Dynamic adjustment of invoice payment status
     if (data.entityType === "invoice") {
       const invoicesList = await this.getInvoices(orgId);
       const invoice = invoicesList.find(i => i.id === data.entityId);
@@ -189,47 +191,50 @@ export class BillingService {
 }
 
 // Routes
-billingRouter.get("/sales", async (req: any, res) => {
+billingRouter.get("/sales", validateRequest({}), async (req: any, res) => {
   const sales = await BillingService.getSales(req.user.orgId);
-  res.json({ success: true, data: sales });
+  return res.json({ success: true, data: sales });
 });
 
-billingRouter.post("/sales", async (req: any, res) => {
-  const parseResult = saleSchema.safeParse(req.body);
-  if (!parseResult.success) {
-    return res.status(400).json({ success: false, details: parseResult.error.format() });
-  }
-
-  const sale = await BillingService.createSale(req.user.orgId, parseResult.data);
-  res.status(201).json({ success: true, data: sale });
+billingRouter.post("/sales", requireIdempotency(), validateRequest({
+  body: saleSchema
+}), async (req: any, res) => {
+  const sale = await BillingService.createSale(req.user.orgId, req.body);
+  return res.status(201).json({ success: true, data: sale });
 });
 
-billingRouter.get("/invoices", async (req: any, res) => {
+billingRouter.get("/invoices", validateRequest({}), async (req: any, res) => {
   const invoices = await BillingService.getInvoices(req.user.orgId);
-  res.json({ success: true, data: invoices });
+  return res.json({ success: true, data: invoices });
 });
 
-billingRouter.post("/invoices", async (req: any, res) => {
-  const parseResult = invoiceSchema.safeParse(req.body);
-  if (!parseResult.success) {
-    return res.status(400).json({ success: false, details: parseResult.error.format() });
-  }
-
-  const invoice = await BillingService.createInvoice(req.user.orgId, parseResult.data);
-  res.status(201).json({ success: true, data: invoice });
+billingRouter.post("/invoices", requireIdempotency(), validateRequest({
+  body: invoiceSchema
+}), async (req: any, res) => {
+  const invoice = await BillingService.createInvoice(req.user.orgId, req.body);
+  return res.status(201).json({ success: true, data: invoice });
 });
 
-billingRouter.get("/payments", async (req: any, res) => {
+billingRouter.get("/payments", validateRequest({}), async (req: any, res) => {
   const payments = await BillingService.getPayments(req.user.orgId);
-  res.json({ success: true, data: payments });
+  return res.json({ success: true, data: payments });
 });
 
-billingRouter.post("/payments", async (req: any, res) => {
-  const parseResult = paymentSchema.safeParse(req.body);
-  if (!parseResult.success) {
-    return res.status(400).json({ success: false, details: parseResult.error.format() });
+billingRouter.post("/payments", requireIdempotency(), validateRequest({
+  body: paymentSchema,
+  businessConstraints: async (req: any) => {
+    // Business constraint: Payment amount cannot exceed the remaining unpaid invoice balance
+    const { entityType, entityId, amount } = req.body;
+    if (entityType === "invoice") {
+      const invoices = await BillingService.getInvoices(req.user.orgId);
+      const invoice = invoices.find(i => i.id === entityId);
+      if (invoice && amount > invoice.remainingAmount) {
+        return `OVERPAYMENT_BLOCKED: Payment amount (${amount} MAD) exceeds outstanding invoice remaining balance (${invoice.remainingAmount} MAD).`;
+      }
+    }
+    return null;
   }
-
-  const payment = await BillingService.recordPayment(req.user.orgId, parseResult.data);
-  res.status(201).json({ success: true, data: payment });
+}), async (req: any, res) => {
+  const payment = await BillingService.recordPayment(req.user.orgId, req.body);
+  return res.status(201).json({ success: true, data: payment });
 });

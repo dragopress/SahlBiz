@@ -1,18 +1,20 @@
 import express from "express";
 import { z } from "zod";
-import { Product, Supplier, Purchase } from "../types";
+import { Product, Supplier } from "../types";
+import { validateRequest } from "../middleware/validation";
+import { requireIdempotency } from "../middleware/idempotency";
 
 export const catalogRouter = express.Router();
 
 // Product & Purchase Zod Schemas
 const productSchema = z.object({
-  name: z.string().min(1).max(150),
+  name: z.string().min(1, "Product name is required").max(150),
   sku: z.string().max(50),
   barcode: z.string().max(50).optional(),
   category: z.string().max(50).optional().default("general"),
   unit: z.enum(["piece", "kg", "liter", "box", "carton", "service"]),
-  costPrice: z.number().nonnegative(),
-  sellingPrice: z.number().nonnegative(),
+  costPrice: z.number().nonnegative("Cost price cannot be negative"),
+  sellingPrice: z.number().nonnegative("Selling price cannot be negative"),
   tvaRate: z.union([z.literal(20), z.literal(14), z.literal(10), z.literal(7), z.literal(0)]),
   stockQty: z.number().default(0),
   minStockAlert: z.number().default(5),
@@ -20,22 +22,31 @@ const productSchema = z.object({
 });
 
 const stockAdjustSchema = z.object({
-  productId: z.string().min(1),
+  productId: z.string().min(1, "Product ID is required"),
   delta: z.number()
 });
 
 const supplierSchema = z.object({
-  name: z.string().min(1),
+  name: z.string().min(1, "Supplier name is required"),
   phone: z.string().max(30),
   category: z.string().max(50).optional().default("General"),
   outstandingDebt: z.number().default(0)
+});
+
+const purchaseReceiveSchema = z.object({
+  supplierId: z.string().min(1, "Supplier ID is required"),
+  items: z.array(z.object({
+    productId: z.string().min(1, "Product ID is required"),
+    quantity: z.number().positive("Quantity must be positive"),
+    purchasePrice: z.number().nonnegative("Purchase price cannot be negative")
+  })).min(1, "At least one item must be received")
 });
 
 // Catalog & Inventory Service Boundary
 export class CatalogService {
   private static products: Map<string, Product[]> = new Map();
   private static suppliers: Map<string, Supplier[]> = new Map();
-  private static purchases: Map<string, Purchase[]> = new Map();
+  private static receivedPurchases: Map<string, any[]> = new Map();
 
   static async getProducts(orgId: string): Promise<Product[]> {
     if (!this.products.has(orgId)) {
@@ -105,49 +116,142 @@ export class CatalogService {
     this.suppliers.set(orgId, list);
     return newSupplier;
   }
+
+  static async receivePurchase(orgId: string, data: any): Promise<any> {
+    const products = await this.getProducts(orgId);
+    const suppliers = await this.getSuppliers(orgId);
+    
+    const supplier = suppliers.find(s => s.id === data.supplierId);
+    if (!supplier) {
+      throw new Error("SUPPLIER_NOT_FOUND");
+    }
+
+    let totalAmount = 0;
+    const receivedItems = [];
+
+    for (const item of data.items) {
+      const product = products.find(p => p.id === item.productId);
+      if (product) {
+        // Increase stock based on purchase receiving
+        product.stockQty += item.quantity;
+        // Adjust product unit cost based on new purchase if applicable
+        product.costPrice = item.purchasePrice;
+        
+        totalAmount += item.quantity * item.purchasePrice;
+        receivedItems.push({
+          productId: product.id,
+          productName: product.name,
+          quantity: item.quantity,
+          purchasePrice: item.purchasePrice
+        });
+      }
+    }
+
+    // Increase supplier's outstanding debt
+    supplier.outstandingDebt += totalAmount;
+
+    const receipt = {
+      id: `rec_${Math.random().toString(36).substring(2, 9)}`,
+      date: new Date().toISOString(),
+      supplierId: supplier.id,
+      supplierName: supplier.name,
+      items: receivedItems,
+      totalAmount,
+      orgId
+    };
+
+    if (!this.receivedPurchases.has(orgId)) {
+      this.receivedPurchases.set(orgId, []);
+    }
+    this.receivedPurchases.get(orgId)?.push(receipt);
+
+    return receipt;
+  }
+
+  static async getReceivedPurchases(orgId: string): Promise<any[]> {
+    return this.receivedPurchases.get(orgId) || [];
+  }
 }
 
 // Routes
-catalogRouter.get("/products", async (req: any, res) => {
+catalogRouter.get("/products", validateRequest({}), async (req: any, res) => {
   const products = await CatalogService.getProducts(req.user.orgId);
-  res.json({ success: true, data: products });
+  return res.json({ success: true, data: products });
 });
 
-catalogRouter.post("/products", async (req: any, res) => {
-  const parseResult = productSchema.safeParse(req.body);
-  if (!parseResult.success) {
-    return res.status(400).json({ success: false, details: parseResult.error.format() });
+catalogRouter.post("/products", validateRequest({
+  body: productSchema,
+  businessConstraints: (req: any) => {
+    const { sellingPrice, costPrice } = req.body;
+    if (sellingPrice < costPrice) {
+      return `MARGIN_VIOLATION: Product selling price (${sellingPrice} MAD) must be greater than or equal to its unit cost price (${costPrice} MAD).`;
+    }
+    return null;
   }
-
-  const product = await CatalogService.createProduct(req.user.orgId, parseResult.data);
-  res.status(201).json({ success: true, data: product });
+}), async (req: any, res) => {
+  const product = await CatalogService.createProduct(req.user.orgId, req.body);
+  return res.status(201).json({ success: true, data: product });
 });
 
-catalogRouter.post("/inventory/adjust", async (req: any, res) => {
-  const parseResult = stockAdjustSchema.safeParse(req.body);
-  if (!parseResult.success) {
-    return res.status(400).json({ success: false, details: parseResult.error.format() });
-  }
-
-  const { productId, delta } = parseResult.data;
+catalogRouter.post("/inventory/adjust", requireIdempotency(), validateRequest({
+  body: stockAdjustSchema
+}), async (req: any, res) => {
+  const { productId, delta } = req.body;
   const product = await CatalogService.adjustStock(req.user.orgId, productId, delta);
   if (!product) {
-    return res.status(404).json({ success: false, message: "Product not found." });
+    return res.status(404).json({
+      success: false,
+      error: {
+        code: "PRODUCT_NOT_FOUND",
+        message: `Product with ID ${productId} does not exist in your tenant portfolio.`,
+        requestId: `req_${Math.random().toString(36).substring(2, 11)}`
+      }
+    });
   }
-  res.json({ success: true, data: product });
+  return res.json({ success: true, data: product });
 });
 
-catalogRouter.get("/suppliers", async (req: any, res) => {
+catalogRouter.get("/suppliers", validateRequest({}), async (req: any, res) => {
   const suppliers = await CatalogService.getSuppliers(req.user.orgId);
-  res.json({ success: true, data: suppliers });
+  return res.json({ success: true, data: suppliers });
 });
 
-catalogRouter.post("/suppliers", async (req: any, res) => {
-  const parseResult = supplierSchema.safeParse(req.body);
-  if (!parseResult.success) {
-    return res.status(400).json({ success: false, details: parseResult.error.format() });
-  }
+catalogRouter.post("/suppliers", validateRequest({
+  body: supplierSchema
+}), async (req: any, res) => {
+  const supplier = await CatalogService.createSupplier(req.user.orgId, req.body);
+  return res.status(201).json({ success: true, data: supplier });
+});
 
-  const supplier = await CatalogService.createSupplier(req.user.orgId, parseResult.data);
-  res.status(201).json({ success: true, data: supplier });
+catalogRouter.get("/purchases", validateRequest({}), async (req: any, res) => {
+  const receipts = await CatalogService.getReceivedPurchases(req.user.orgId);
+  return res.json({ success: true, data: receipts });
+});
+
+catalogRouter.post("/purchases/receive", requireIdempotency(), validateRequest({
+  body: purchaseReceiveSchema
+}), async (req: any, res) => {
+  try {
+    const receipt = await CatalogService.receivePurchase(req.user.orgId, req.body);
+    return res.status(201).json({ success: true, data: receipt });
+  } catch (error: any) {
+    if (error.message === "SUPPLIER_NOT_FOUND") {
+      return res.status(404).json({
+        success: false,
+        error: {
+          code: "NOT_FOUND",
+          message: "The specified supplier was not found.",
+          requestId: `req_${Math.random().toString(36).substring(2, 11)}`
+        }
+      });
+    }
+    return res.status(500).json({
+      success: false,
+      error: {
+        code: "INTERNAL_ERROR",
+        message: "An error occurred during purchase receiving.",
+        requestId: `req_${Math.random().toString(36).substring(2, 11)}`
+      }
+    });
+  }
 });

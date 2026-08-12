@@ -13,6 +13,8 @@ import { billingRouter } from "./server/modules/billing";
 import { financeRouter } from "./server/modules/finance";
 import { hrRouter } from "./server/modules/hr";
 import { aiRouter } from "./server/modules/ai";
+import { sendStandardError, globalErrorHandler, SahlBizErrorCode } from "./server/utils/errors";
+import { requireIdempotency } from "./server/middleware/idempotency";
 
 dotenv.config();
 
@@ -33,17 +35,9 @@ function decodeToken(token: string) {
   }
 }
 
-// Reusable Structured Error Response Helper
+// Reusable Structured Error Response Helper wrapped around unified system
 function sendErrorResponse(res: express.Response, statusCode: number, code: string, message: string, details?: any) {
-  return res.status(statusCode).json({
-    success: false,
-    error: {
-      code,
-      message,
-      requestId: `req_${Math.random().toString(36).substring(2, 11)}`,
-      details
-    }
-  });
+  return sendStandardError(res, statusCode, code as SahlBizErrorCode, message, details);
 }
 
 // Authenticated Request Interface
@@ -160,7 +154,7 @@ const syncSchema = z.object({
 });
 
 // 4. Background Sync Endpoint for Offline PWA Sales & Inventory
-app.post("/api/sync", authenticate, requireOrganization, requirePermission("sale.create"), async (req: AuthenticatedRequest, res) => {
+app.post("/api/sync", authenticate, requireOrganization, requirePermission("sale.create"), requireIdempotency(), async (req: AuthenticatedRequest, res) => {
   try {
     const parseResult = syncSchema.safeParse(req.body);
     if (!parseResult.success) {
@@ -183,6 +177,9 @@ app.post("/api/sync", authenticate, requireOrganization, requirePermission("sale
     return sendErrorResponse(res, 500, "INTERNAL_ERROR", "Failed to sync offline data", error?.message);
   }
 });
+
+// Register Global Error Handler (Guarantees zero stack leaks or sensitive details)
+app.use(globalErrorHandler);
 
 // Setup Vite or Static File Serving
 async function startServer() {

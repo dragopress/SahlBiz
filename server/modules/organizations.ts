@@ -1,12 +1,13 @@
 import express from "express";
 import { z } from "zod";
 import { Organization, Subscription } from "../types";
+import { validateRequest } from "../middleware/validation";
 
 export const organizationsRouter = express.Router();
 
 // Organization Zod Schemas
 const updateOrgSchema = z.object({
-  name: z.string().min(1).max(100),
+  name: z.string().min(1, "Name cannot be empty").max(100),
   type: z.enum(["retail", "service", "wholesale", "artisan"]),
   ice: z.string().max(30).optional(),
   if: z.string().max(30).optional(),
@@ -14,7 +15,7 @@ const updateOrgSchema = z.object({
   address: z.string().max(300).optional(),
   city: z.string().max(100).optional(),
   phone: z.string().max(30).optional(),
-  email: z.string().email().optional()
+  email: z.string().email("Invalid organization email").optional()
 });
 
 const subscriptionSchema = z.object({
@@ -59,7 +60,7 @@ export class OrganizationService {
     };
     this.subscriptions.set(orgId, updated);
     
-    // Update the organization's current plan dynamically as well
+    // Update the organization's current plan dynamically
     const org = await this.getById(orgId);
     if (org) {
       org.plan = plan;
@@ -71,45 +72,34 @@ export class OrganizationService {
 }
 
 // Routes with Middleware validations
-organizationsRouter.get("/profile", async (req: any, res) => {
-  const orgId = req.user?.orgId;
-  if (!orgId) return res.status(401).json({ success: false, message: "Missing organization claim." });
-  
-  const profile = await OrganizationService.getById(orgId);
-  return res.json({ success: true, data: profile || { id: orgId, name: "Unconfigured Org", type: "retail", plan: "free" } });
+organizationsRouter.get("/profile", validateRequest({}), async (req: any, res) => {
+  const profile = await OrganizationService.getById(req.user.orgId);
+  return res.json({ success: true, data: profile || { id: req.user.orgId, name: "Unconfigured Org", type: "retail", plan: "free" } });
 });
 
-organizationsRouter.put("/profile", async (req: any, res) => {
-  const orgId = req.user?.orgId;
-  if (!orgId) return res.status(401).json({ success: false, message: "Missing organization claim." });
-
-  const parseResult = updateOrgSchema.safeParse(req.body);
-  if (!parseResult.success) {
-    return res.status(400).json({ success: false, details: parseResult.error.format() });
-  }
-
-  const updatedProfile = await OrganizationService.update(orgId, parseResult.data);
+organizationsRouter.put("/profile", validateRequest({
+  body: updateOrgSchema
+}), async (req: any, res) => {
+  const updatedProfile = await OrganizationService.update(req.user.orgId, req.body);
   return res.json({ success: true, data: updatedProfile });
 });
 
-organizationsRouter.get("/subscription", async (req: any, res) => {
-  const orgId = req.user?.orgId;
-  const sub = await OrganizationService.getSubscription(orgId);
-  return res.json({ success: true, data: sub || { orgId, plan: "free", status: "active", expiresAt: "Unlimited" } });
+organizationsRouter.get("/subscription", validateRequest({}), async (req: any, res) => {
+  const sub = await OrganizationService.getSubscription(req.user.orgId);
+  return res.json({ success: true, data: sub || { orgId: req.user.orgId, plan: "free", status: "active", expiresAt: "Unlimited" } });
 });
 
-// Admin-only subscription upgrading route
-organizationsRouter.post("/subscription/upgrade", async (req: any, res) => {
-  // Gate check: Only SahlBiz global admins can write premium logs directly
-  if (req.user?.role !== "admin" && req.user?.email !== "admin@sahlbiz.ma") {
-    return res.status(403).json({ success: false, error: "ACCESS_DENIED", message: "Only SahlBiz admins can manage active subscriptions." });
+// Admin-only subscription upgrading route with strict business constraints checks
+organizationsRouter.post("/subscription/upgrade", validateRequest({
+  body: subscriptionSchema,
+  businessConstraints: (req: any) => {
+    // Check if identity is global admin
+    if (req.user?.role !== "admin" && req.user?.email !== "admin@sahlbiz.ma") {
+      return "ACCESS_DENIED: Only SahlBiz system administrators are authorized to manually upgrade subscriptions.";
+    }
+    return null;
   }
-
-  const parseResult = subscriptionSchema.safeParse(req.body);
-  if (!parseResult.success) {
-    return res.status(400).json({ success: false, details: parseResult.error.format() });
-  }
-
-  const updatedSub = await OrganizationService.updateSubscription(req.user.orgId, parseResult.data.plan, parseResult.data.status);
+}), async (req: any, res) => {
+  const updatedSub = await OrganizationService.updateSubscription(req.user.orgId, req.body.plan, req.body.status);
   return res.json({ success: true, data: updatedSub });
 });

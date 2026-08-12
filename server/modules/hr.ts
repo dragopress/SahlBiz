@@ -1,25 +1,26 @@
 import express from "express";
 import { z } from "zod";
 import { Employee, PayrollSlip } from "../types";
+import { validateRequest } from "../middleware/validation";
 
 export const hrRouter = express.Router();
 
 // HR Zod Schemas
 const employeeSchema = z.object({
-  name: z.string().min(1).max(100),
-  role: z.string().min(1),
-  cin: z.string().max(15),
+  name: z.string().min(1, "Name is required").max(100),
+  role: z.string().min(1, "Role is required"),
+  cin: z.string().min(3, "CIN must be at least 3 characters").max(15),
   cnssNumber: z.string().max(20).optional(),
   phone: z.string().max(30),
-  baseSalary: z.number().positive()
+  baseSalary: z.number().positive("Base salary must be positive")
 });
 
 const generatePayrollSchema = z.object({
-  employeeId: z.string().min(1),
+  employeeId: z.string().min(1, "Employee ID is required"),
   month: z.string().regex(/^\d{4}-\d{2}$/, "Format must be YYYY-MM")
 });
 
-// Employees & Payroll Service Boundary (Standard Moroccan Fiscal Adjusters)
+// Employees & Payroll Service Boundary
 export class HRService {
   private static employees: Map<string, Employee[]> = new Map();
   private static payrolls: Map<string, PayrollSlip[]> = new Map();
@@ -106,37 +107,46 @@ export class HRService {
 }
 
 // Routes
-hrRouter.get("/employees", async (req: any, res) => {
+hrRouter.get("/employees", validateRequest({}), async (req: any, res) => {
   const list = await HRService.getEmployees(req.user.orgId);
-  res.json({ success: true, data: list });
+  return res.json({ success: true, data: list });
 });
 
-hrRouter.post("/employees", async (req: any, res) => {
-  const parseResult = employeeSchema.safeParse(req.body);
-  if (!parseResult.success) {
-    return res.status(400).json({ success: false, details: parseResult.error.format() });
+hrRouter.post("/employees", validateRequest({
+  body: employeeSchema,
+  businessConstraints: (req: any) => {
+    // Moroccan Compliance: Check that base salary meets the legal SMIG limit of 3,120 MAD per month.
+    const { baseSalary } = req.body;
+    if (baseSalary < 3120) {
+      return `SMIG_VIOLATION: Base salary of ${baseSalary} MAD is below the Moroccan legal SMIG limit of 3,120 MAD per month.`;
+    }
+    return null;
   }
-
-  const employee = await HRService.createEmployee(req.user.orgId, parseResult.data);
-  res.status(201).json({ success: true, data: employee });
+}), async (req: any, res) => {
+  const employee = await HRService.createEmployee(req.user.orgId, req.body);
+  return res.status(201).json({ success: true, data: employee });
 });
 
-hrRouter.get("/payroll", async (req: any, res) => {
+hrRouter.get("/payroll", validateRequest({}), async (req: any, res) => {
   const list = await HRService.getPayrollSlips(req.user.orgId);
-  res.json({ success: true, data: list });
+  return res.json({ success: true, data: list });
 });
 
-hrRouter.post("/payroll/generate", async (req: any, res) => {
-  const parseResult = generatePayrollSchema.safeParse(req.body);
-  if (!parseResult.success) {
-    return res.status(400).json({ success: false, details: parseResult.error.format() });
-  }
-
+hrRouter.post("/payroll/generate", validateRequest({
+  body: generatePayrollSchema
+}), async (req: any, res) => {
   try {
-    const { employeeId, month } = parseResult.data;
+    const { employeeId, month } = req.body;
     const slip = await HRService.generateSlip(req.user.orgId, employeeId, month);
-    res.status(201).json({ success: true, data: slip });
+    return res.status(201).json({ success: true, data: slip });
   } catch (err: any) {
-    res.status(400).json({ success: false, error: "PAYROLL_ERROR", message: err.message });
+    return res.status(400).json({
+      success: false,
+      error: {
+        code: "PAYROLL_ERROR",
+        message: err.message,
+        requestId: `req_${Math.random().toString(36).substring(2, 11)}`
+      }
+    });
   }
 });

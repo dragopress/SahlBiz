@@ -117,7 +117,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'expense.read', 'expense.create', 'expense.approve',
     'accounting.read', 'accounting.create', 'accounting.adjust',
     'payroll.read',
-    'settings.read'
+    'settings.read',
+    'audit.read'
   ],
   cashier: [
     'dashboard.read',
@@ -220,6 +221,8 @@ export function canAccessModule(role: string | undefined, module: string): boole
       return hasPermission(role, 'subscription.read');
     case 'settings':
       return hasPermission(role, 'settings.read');
+    case 'audit':
+      return hasPermission(role, 'audit.read');
     case 'admin':
       return normalizedRole === 'admin';
     default:

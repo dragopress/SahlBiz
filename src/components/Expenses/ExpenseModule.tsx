@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 
 export const ExpenseModule: React.FC = () => {
-  const { expenses, addExpense, updateExpense } = useStore();
+  const { expenses, addExpense, updateExpense, isLoadingInitialData, isSaving } = useStore();
   const { currentUser } = useAuth();
 
   const [activeTab, setActiveTab] = useState<'all' | 'recurring'>('all');
@@ -310,51 +310,75 @@ export const ExpenseModule: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
-                  {filteredExpenses.map(exp => (
-                    <tr key={exp.id} className="hover:bg-slate-800/40 transition-colors">
-                      <td className="p-3.5">
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold text-white text-xs sm:text-sm">{exp.title}</span>
-                          {exp.isRecurring && exp.recurringStatus !== 'cancelled' && (
-                            <span className="flex items-center gap-0.5 bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 px-1.5 py-0.5 rounded text-[9px] font-bold">
-                              <Repeat className="w-2.5 h-2.5" />
-                              Récurrent
-                            </span>
-                          )}
-                          {exp.notes?.includes('Générée automatiquement') && (
-                            <span className="flex items-center gap-0.5 bg-indigo-500/15 text-indigo-400 border border-indigo-500/20 px-1.5 py-0.5 rounded text-[9px] font-bold">
-                              <Calendar className="w-2.5 h-2.5" />
-                              Auto
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[11px] text-slate-400 flex items-center gap-2 mt-0.5">
-                          <span>{exp.vendorName}</span>
-                          {exp.vendorIce && <span className="text-emerald-400 font-mono">ICE: {exp.vendorIce}</span>}
-                        </div>
-                      </td>
+                  {isLoadingInitialData ? (
+                    Array.from({ length: 5 }).map((_, index) => (
+                      <tr key={index} className="animate-pulse">
+                        <td className="p-3.5">
+                          <div className="h-4 bg-slate-800 rounded w-2/3 mb-1.5"></div>
+                          <div className="h-3 bg-slate-800/50 rounded w-1/3"></div>
+                        </td>
+                        <td className="p-3.5">
+                          <div className="h-4 bg-slate-800 rounded w-16 mb-1.5"></div>
+                          <div className="h-3 bg-slate-800/50 rounded w-12"></div>
+                        </td>
+                        <td className="p-3.5 text-right">
+                          <div className="h-4 bg-slate-800 rounded w-16 ml-auto"></div>
+                        </td>
+                        <td className="p-3.5 text-center">
+                          <div className="h-4 bg-slate-800 rounded w-20 mx-auto"></div>
+                        </td>
+                        <td className="p-3.5 text-right">
+                          <div className="h-4 bg-slate-800 rounded w-20 ml-auto"></div>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    filteredExpenses.map(exp => (
+                      <tr key={exp.id} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="p-3.5">
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-white text-xs sm:text-sm">{exp.title}</span>
+                            {exp.isRecurring && exp.recurringStatus !== 'cancelled' && (
+                              <span className="flex items-center gap-0.5 bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 px-1.5 py-0.5 rounded text-[9px] font-bold">
+                                <Repeat className="w-2.5 h-2.5" />
+                                Récurrent
+                              </span>
+                            )}
+                            {exp.notes?.includes('Générée automatiquement') && (
+                              <span className="flex items-center gap-0.5 bg-indigo-500/15 text-indigo-400 border border-indigo-500/20 px-1.5 py-0.5 rounded text-[9px] font-bold">
+                                <Calendar className="w-2.5 h-2.5" />
+                                Auto
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-slate-400 flex items-center gap-2 mt-0.5">
+                            <span>{exp.vendorName}</span>
+                            {exp.vendorIce && <span className="text-emerald-400 font-mono">ICE: {exp.vendorIce}</span>}
+                          </div>
+                        </td>
 
-                      <td className="p-3.5">
-                        <span className="bg-slate-800 text-slate-300 px-2 py-0.5 rounded text-[10px] uppercase font-bold">
-                          {exp.category}
-                        </span>
-                        <div className="text-[10px] text-slate-500 mt-0.5">{exp.date}</div>
-                      </td>
+                        <td className="p-3.5">
+                          <span className="bg-slate-800 text-slate-300 px-2 py-0.5 rounded text-[10px] uppercase font-bold">
+                            {exp.category}
+                          </span>
+                          <div className="text-[10px] text-slate-500 mt-0.5">{exp.date}</div>
+                        </td>
 
-                      <td className="p-3.5 text-right font-mono text-slate-400">
-                        {formatMad(exp.amountHt)}
-                      </td>
+                        <td className="p-3.5 text-right font-mono text-slate-400">
+                          {formatMad(exp.amountHt)}
+                        </td>
 
-                      <td className="p-3.5 text-center font-mono text-emerald-400 font-bold">
-                        {formatMad(exp.tvaAmount)} ({exp.tvaRate}%)
-                      </td>
+                        <td className="p-3.5 text-center font-mono text-emerald-400 font-bold">
+                          {formatMad(exp.tvaAmount)} ({exp.tvaRate}%)
+                        </td>
 
-                      <td className="p-3.5 text-right font-mono font-bold text-white text-sm">
-                        {formatMad(exp.amountTtc)}
-                      </td>
-                    </tr>
-                  ))}
-                  {filteredExpenses.length === 0 && (
+                        <td className="p-3.5 text-right font-mono font-bold text-white text-sm">
+                          {formatMad(exp.amountTtc)}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                  {!isLoadingInitialData && filteredExpenses.length === 0 && (
                     <tr>
                       <td colSpan={5} className="p-8 text-center text-slate-500">
                         Aucune dépense trouvée.
@@ -604,8 +628,18 @@ export const ExpenseModule: React.FC = () => {
                 <button type="button" onClick={() => setIsAddModalOpen(false)} className="px-4 py-2 bg-slate-800 rounded-xl text-slate-300">
                   Annuler
                 </button>
-                <button type="submit" className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 font-bold rounded-xl text-white">
-                  Enregistrer Dépense
+                <button
+                  type="submit"
+                  disabled={isSaving}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 font-bold rounded-xl text-white flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSaving && (
+                    <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                  )}
+                  <span>{isSaving ? 'Enregistrement...' : 'Enregistrer Dépense'}</span>
                 </button>
               </div>
             </form>

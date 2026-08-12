@@ -14,7 +14,9 @@ import {
   Payslip,
   CashRegisterSession,
   PaymentMethod,
-  DocumentType
+  DocumentType,
+  BusinessEvent,
+  BusinessEventType
 } from '../types';
 import {
   saveProfileToFirestore,
@@ -29,6 +31,11 @@ import {
   saveEmployeeToFirestore,
   fetchInitialFirestoreData
 } from '../lib/firestoreService';
+import {
+  logBusinessEvent,
+  fetchBusinessEvents,
+  getDemoEvents
+} from '../lib/auditService';
 import {
   INITIAL_BUSINESS_PROFILE,
   INITIAL_CUSTOMERS,
@@ -62,7 +69,8 @@ export type ModuleType =
   | 'accountant'
   | 'pricing'
   | 'settings'
-  | 'admin';
+  | 'admin'
+  | 'audit';
 
 export interface PosCartItem {
   product: Product;
@@ -128,6 +136,16 @@ interface StoreContextType {
   isOnline: boolean;
   pendingSyncCount: number;
   triggerManualSync: () => Promise<void>;
+
+  // Consistent Loading state tracking
+  isLoadingInitialData: boolean;
+  isSaving: boolean;
+  setIsSaving: (saving: boolean) => void;
+
+  // Business events audit ledger
+  businessEvents: BusinessEvent[];
+  setBusinessEvents: React.Dispatch<React.SetStateAction<BusinessEvent[]>>;
+  triggerAuditLog: (eventType: BusinessEventType, payload: any) => Promise<void>;
 }
 
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
@@ -158,6 +176,21 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Offline PWA Sync state
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
+
+  // Loading states
+  const [isLoadingInitialData, setIsLoadingInitialData] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+
+  const [businessEvents, setBusinessEvents] = useState<BusinessEvent[]>([]);
+
+  const triggerAuditLog = async (eventType: BusinessEventType, payload: any) => {
+    try {
+      const logged = await logBusinessEvent(eventType, payload, orgId);
+      setBusinessEvents(prev => [logged, ...prev]);
+    } catch (e) {
+      console.error('Failed to write business event to audit ledger:', e);
+    }
+  };
 
   const refreshPendingCount = async () => {
     try {
@@ -232,16 +265,32 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     // Try fetching remote Firestore collections for this org
     if (currentUser && orgId && orgId !== 'org_default') {
-      fetchInitialFirestoreData(orgId).then(remoteData => {
-        if (!remoteData) return;
-        if (remoteData.businessProfile) setProfile(remoteData.businessProfile);
-        if (remoteData.customers && remoteData.customers.length > 0) setCustomers(remoteData.customers);
-        if (remoteData.products && remoteData.products.length > 0) setProducts(remoteData.products);
-        if (remoteData.suppliers && remoteData.suppliers.length > 0) setSuppliers(remoteData.suppliers);
-        if (remoteData.documents && remoteData.documents.length > 0) setDocuments(remoteData.documents);
-        if (remoteData.expenses && remoteData.expenses.length > 0) setExpenses(remoteData.expenses);
-        if (remoteData.employees && remoteData.employees.length > 0) setEmployees(remoteData.employees);
-      }).catch(err => console.warn('Firestore initial sync note:', err));
+      setIsLoadingInitialData(true);
+      Promise.all([
+        fetchInitialFirestoreData(orgId),
+        fetchBusinessEvents(orgId)
+      ]).then(([remoteData, events]) => {
+        if (remoteData) {
+          if (remoteData.businessProfile) setProfile(remoteData.businessProfile);
+          if (remoteData.customers && remoteData.customers.length > 0) setCustomers(remoteData.customers);
+          if (remoteData.products && remoteData.products.length > 0) setProducts(remoteData.products);
+          if (remoteData.suppliers && remoteData.suppliers.length > 0) setSuppliers(remoteData.suppliers);
+          if (remoteData.documents && remoteData.documents.length > 0) setDocuments(remoteData.documents);
+          if (remoteData.expenses && remoteData.expenses.length > 0) setExpenses(remoteData.expenses);
+          if (remoteData.employees && remoteData.employees.length > 0) setEmployees(remoteData.employees);
+        }
+        if (events && events.length > 0) {
+          setBusinessEvents(events);
+        } else {
+          setBusinessEvents(getDemoEvents(orgId));
+        }
+      })
+      .catch(err => console.warn('Firestore initial sync note:', err))
+      .finally(() => {
+        setIsLoadingInitialData(false);
+      });
+    } else {
+      setBusinessEvents(getDemoEvents(orgId));
     }
   }, [currentUser, orgId]);
 
@@ -277,180 +326,345 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [orgId, profile, customers, products, suppliers, documents, expenses, employees, attendance, payslips, cashSession]);
 
-  const updateProfile = (newProfile: BusinessProfile) => {
-    setProfile(newProfile);
-    saveProfileToFirestore(newProfile, orgId);
-  };
-
-  const addCustomer = (custData: Omit<Customer, 'id' | 'createdAt' | 'kreddyBalance'>) => {
-    const newCust: Customer = {
-      ...custData,
-      id: `cust-${Date.now()}`,
-      createdAt: new Date().toISOString().split('T')[0],
-      kreddyBalance: 0,
-    };
-    setCustomers(prev => [newCust, ...prev]);
-    saveCustomerToFirestore(newCust, orgId);
-  };
-
-  const updateCustomer = (cust: Customer) => {
-    setCustomers(prev => prev.map(c => c.id === cust.id ? cust : c));
-    saveCustomerToFirestore(cust, orgId);
-  };
-
-  const deleteCustomer = (id: string) => {
-    setCustomers(prev => prev.filter(c => c.id !== id));
-    deleteCustomerFromFirestore(id, orgId);
-  };
-
-  const adjustKreddyBalance = (customerId: string, amountChange: number) => {
-    setCustomers(prev => prev.map(c => {
-      if (c.id === customerId) {
-        const updated = {
-          ...c,
-          kreddyBalance: Math.max(0, Number((c.kreddyBalance + amountChange).toFixed(2))),
-        };
-        saveCustomerToFirestore(updated, orgId);
-        return updated;
-      }
-      return c;
-    }));
-  };
-
-  const addProduct = (prodData: Omit<Product, 'id'>) => {
-    const newProd: Product = {
-      ...prodData,
-      id: `prod-${Date.now()}`,
-    };
-    setProducts(prev => [newProd, ...prev]);
-    saveProductToFirestore(newProd, orgId);
-  };
-
-  const updateProduct = (prod: Product) => {
-    setProducts(prev => prev.map(p => p.id === prod.id ? prod : p));
-    saveProductToFirestore(prod, orgId);
-  };
-
-  const deleteProduct = (id: string) => {
-    setProducts(prev => prev.filter(p => p.id !== id));
-    deleteProductFromFirestore(id, orgId);
-  };
-
-  const addSupplier = (suppData: Omit<Supplier, 'id' | 'outstandingDebt'>) => {
-    const newSupp: Supplier = {
-      ...suppData,
-      id: `supp-${Date.now()}`,
-      outstandingDebt: 0,
-    };
-    setSuppliers(prev => [newSupp, ...prev]);
-    saveSupplierToFirestore(newSupp, orgId);
-  };
-
-  const updateSupplier = (supp: Supplier) => {
-    setSuppliers(prev => prev.map(s => s.id === supp.id ? supp : s));
-    saveSupplierToFirestore(supp, orgId);
-  };
-
-  const addDocument = (docData: Omit<BusinessDocument, 'id' | 'number'>) => {
-    const prefix = docData.type === 'facture' ? 'FAC' : docData.type === 'devis' ? 'DEV' : docData.type === 'bl' ? 'BL' : 'BC';
-    const numSeq = Math.floor(100 + Math.random() * 900);
-    const newNum = `${prefix}-2026-${numSeq}`;
-
-    // Authoritative calculation of financial metrics
-    const totals = recalculateDocumentTotals(docData.items, docData.paymentMethod, docData.paidAmount);
-
-    const newDoc: BusinessDocument = {
-      ...docData,
-      id: `doc-${Date.now()}`,
-      number: newNum,
-      subtotalHt: totals.subtotalHt,
-      totalTva: totals.totalTva,
-      droitDeTimbre: totals.droitDeTimbre,
-      totalTtc: totals.totalTtc,
-      remainingAmount: totals.remainingAmount,
-      status: totals.remainingAmount <= 0 ? 'paid' : docData.paidAmount > 0 ? 'partial' : 'unpaid'
-    };
-
-    setDocuments(prev => [newDoc, ...prev]);
-    saveDocumentToFirestore(newDoc, orgId);
-
-    // If invoice is unpaid/partial and set to Kreddy, update client balance
-    if (newDoc.type === 'facture' && newDoc.paymentMethod === 'kreddy' && newDoc.remainingAmount > 0) {
-      adjustKreddyBalance(newDoc.customerId, newDoc.remainingAmount);
+  const updateProfile = async (newProfile: BusinessProfile) => {
+    setIsSaving(true);
+    try {
+      setProfile(newProfile);
+      await saveProfileToFirestore(newProfile, orgId);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  const convertDevisToInvoice = (devisId: string) => {
-    const devis = documents.find(d => d.id === devisId && d.type === 'devis');
-    if (!devis) return;
-
-    const numSeq = Math.floor(100 + Math.random() * 900);
-    const totals = recalculateDocumentTotals(devis.items, devis.paymentMethod, 0);
-
-    const newInvoice: BusinessDocument = {
-      ...devis,
-      id: `doc-${Date.now()}`,
-      number: `FAC-2026-${numSeq}`,
-      type: 'facture',
-      convertedFromId: devis.id,
-      date: new Date().toISOString().split('T')[0],
-      dueDate: new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
-      status: 'unpaid',
-      paidAmount: 0,
-      subtotalHt: totals.subtotalHt,
-      totalTva: totals.totalTva,
-      droitDeTimbre: totals.droitDeTimbre,
-      totalTtc: totals.totalTtc,
-      remainingAmount: totals.totalTtc,
-    };
-
-    setDocuments(prev => [newInvoice, ...prev]);
-    saveDocumentToFirestore(newInvoice, orgId);
+  const addCustomer = async (custData: Omit<Customer, 'id' | 'createdAt' | 'kreddyBalance'>) => {
+    setIsSaving(true);
+    try {
+      const newCust: Customer = {
+        ...custData,
+        id: `cust-${Date.now()}`,
+        createdAt: new Date().toISOString().split('T')[0],
+        kreddyBalance: 0,
+      };
+      setCustomers(prev => [newCust, ...prev]);
+      await saveCustomerToFirestore(newCust, orgId);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const recordDocumentPayment = (docId: string, amount: number, method: PaymentMethod) => {
-    setDocuments(prev => prev.map(doc => {
-      if (doc.id === docId) {
-        const newPaid = Number((doc.paidAmount + amount).toFixed(2));
-        const newRemaining = Math.max(0, Number((doc.totalTtc - newPaid).toFixed(2)));
-        const newStatus = newRemaining === 0 ? 'paid' : 'partial';
+  const updateCustomer = async (cust: Customer) => {
+    setIsSaving(true);
+    try {
+      setCustomers(prev => prev.map(c => c.id === cust.id ? cust : c));
+      await saveCustomerToFirestore(cust, orgId);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
-        // If paying a Kreddy debt
-        if (doc.customerId) {
-          adjustKreddyBalance(doc.customerId, -amount);
+  const deleteCustomer = async (id: string) => {
+    setIsSaving(true);
+    try {
+      setCustomers(prev => prev.filter(c => c.id !== id));
+      await deleteCustomerFromFirestore(id, orgId);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const adjustKreddyBalance = async (customerId: string, amountChange: number) => {
+    setIsSaving(true);
+    try {
+      let updatedToSave: Customer | null = null;
+      setCustomers(prev => prev.map(c => {
+        if (c.id === customerId) {
+          const updated = {
+            ...c,
+            kreddyBalance: Math.max(0, Number((c.kreddyBalance + amountChange).toFixed(2))),
+          };
+          updatedToSave = updated;
+          return updated;
         }
-
-        const updatedDoc = {
-          ...doc,
-          paidAmount: newPaid,
-          remainingAmount: newRemaining,
-          status: newStatus,
-          paymentMethod: method,
-        };
-        saveDocumentToFirestore(updatedDoc, orgId);
-        return updatedDoc;
+        return c;
+      }));
+      if (updatedToSave) {
+        await saveCustomerToFirestore(updatedToSave, orgId);
       }
-      return doc;
-    }));
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const addExpense = (expData: Omit<Expense, 'id'>) => {
-    const newExp: Expense = {
-      ...expData,
-      id: `exp-${Date.now()}`,
-    };
-    setExpenses(prev => [newExp, ...prev]);
-    saveExpenseToFirestore(newExp, orgId);
+  const addProduct = async (prodData: Omit<Product, 'id'>) => {
+    setIsSaving(true);
+    try {
+      const newProd: Product = {
+        ...prodData,
+        id: `prod-${Date.now()}`,
+      };
+      setProducts(prev => [newProd, ...prev]);
+      await saveProductToFirestore(newProd, orgId);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const updateExpense = (updatedExp: Expense) => {
-    setExpenses(prev => prev.map(e => e.id === updatedExp.id ? updatedExp : e));
-    saveExpenseToFirestore(updatedExp, orgId);
+  const updateProduct = async (prod: Product) => {
+    setIsSaving(true);
+    try {
+      const existing = products.find(p => p.id === prod.id);
+      setProducts(prev => prev.map(p => p.id === prod.id ? prod : p));
+      await saveProductToFirestore(prod, orgId);
+
+      if (existing && existing.stockQty !== prod.stockQty) {
+        await triggerAuditLog('STOCK_ADJUSTED', {
+          productId: prod.id,
+          productName: prod.name,
+          quantity: prod.stockQty,
+          previousQuantity: existing.stockQty
+        });
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const deleteExpense = (id: string) => {
-    setExpenses(prev => prev.filter(e => e.id !== id));
-    deleteExpenseFromFirestore(id, orgId);
+  const deleteProduct = async (id: string) => {
+    setIsSaving(true);
+    try {
+      setProducts(prev => prev.filter(p => p.id !== id));
+      await deleteProductFromFirestore(id, orgId);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const addSupplier = async (suppData: Omit<Supplier, 'id' | 'outstandingDebt'>) => {
+    setIsSaving(true);
+    try {
+      const newSupp: Supplier = {
+        ...suppData,
+        id: `supp-${Date.now()}`,
+        outstandingDebt: 0,
+      };
+      setSuppliers(prev => [newSupp, ...prev]);
+      await saveSupplierToFirestore(newSupp, orgId);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const updateSupplier = async (supp: Supplier) => {
+    setIsSaving(true);
+    try {
+      setSuppliers(prev => prev.map(s => s.id === supp.id ? supp : s));
+      await saveSupplierToFirestore(supp, orgId);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const addDocument = async (docData: Omit<BusinessDocument, 'id' | 'number'>) => {
+    setIsSaving(true);
+    try {
+      const prefix = docData.type === 'facture' ? 'FAC' : docData.type === 'devis' ? 'DEV' : docData.type === 'bl' ? 'BL' : 'BC';
+      const numSeq = Math.floor(100 + Math.random() * 900);
+      const newNum = `${prefix}-2026-${numSeq}`;
+
+      // Authoritative calculation of financial metrics
+      const totals = recalculateDocumentTotals(docData.items, docData.paymentMethod, docData.paidAmount);
+
+      const newDoc: BusinessDocument = {
+        ...docData,
+        id: `doc-${Date.now()}`,
+        number: newNum,
+        subtotalHt: totals.subtotalHt,
+        totalTva: totals.totalTva,
+        droitDeTimbre: totals.droitDeTimbre,
+        totalTtc: totals.totalTtc,
+        remainingAmount: totals.remainingAmount,
+        status: totals.remainingAmount <= 0 ? 'paid' : docData.paidAmount > 0 ? 'partial' : 'unpaid'
+      };
+
+      setDocuments(prev => [newDoc, ...prev]);
+      await saveDocumentToFirestore(newDoc, orgId);
+
+      // Log Business Events
+      if (newDoc.type === 'facture') {
+        await triggerAuditLog('INVOICE_CREATED', {
+          documentId: newDoc.id,
+          documentNumber: newDoc.number,
+          amountTtc: newDoc.totalTtc,
+          customerName: newDoc.customerName
+        });
+      }
+
+      // If invoice is unpaid/partial and set to Kreddy, update client balance
+      if (newDoc.type === 'facture' && newDoc.paymentMethod === 'kreddy' && newDoc.remainingAmount > 0) {
+        await adjustKreddyBalance(newDoc.customerId, newDoc.remainingAmount);
+        await triggerAuditLog('CUSTOMER_CREDIT_CREATED', {
+          customerId: newDoc.customerId,
+          customerName: newDoc.customerName,
+          amount: newDoc.remainingAmount
+        });
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const convertDevisToInvoice = async (devisId: string) => {
+    setIsSaving(true);
+    try {
+      const devis = documents.find(d => d.id === devisId && d.type === 'devis');
+      if (!devis) return;
+
+      const numSeq = Math.floor(100 + Math.random() * 900);
+      const totals = recalculateDocumentTotals(devis.items, devis.paymentMethod, 0);
+
+      const newInvoice: BusinessDocument = {
+        ...devis,
+        id: `doc-${Date.now()}`,
+        number: `FAC-2026-${numSeq}`,
+        type: 'facture',
+        convertedFromId: devis.id,
+        date: new Date().toISOString().split('T')[0],
+        dueDate: new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
+        status: 'unpaid',
+        paidAmount: 0,
+        subtotalHt: totals.subtotalHt,
+        totalTva: totals.totalTva,
+        droitDeTimbre: totals.droitDeTimbre,
+        totalTtc: totals.totalTtc,
+        remainingAmount: totals.totalTtc,
+      };
+
+      setDocuments(prev => [newInvoice, ...prev]);
+      await saveDocumentToFirestore(newInvoice, orgId);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const recordDocumentPayment = async (docId: string, amount: number, method: PaymentMethod) => {
+    setIsSaving(true);
+    try {
+      let docToSave: BusinessDocument | null = null;
+      setDocuments(prev => prev.map(doc => {
+        if (doc.id === docId) {
+          const newPaid = Number((doc.paidAmount + amount).toFixed(2));
+          const newRemaining = Math.max(0, Number((doc.totalTtc - newPaid).toFixed(2)));
+          const newStatus = newRemaining === 0 ? 'paid' : 'partial';
+
+          // If paying a Kreddy debt
+          if (doc.customerId) {
+            adjustKreddyBalance(doc.customerId, -amount);
+          }
+
+          const updatedDoc = {
+            ...doc,
+            paidAmount: newPaid,
+            remainingAmount: newRemaining,
+            status: newStatus,
+            paymentMethod: method,
+          };
+          docToSave = updatedDoc;
+          return updatedDoc;
+        }
+        return doc;
+      }));
+      if (docToSave) {
+        await saveDocumentToFirestore(docToSave, orgId);
+        await triggerAuditLog('PAYMENT_RECEIVED', {
+          amount,
+          paymentMethod: method,
+          documentId: docId,
+          documentNumber: (docToSave as BusinessDocument).number
+        });
+        if ((docToSave as BusinessDocument).customerId && (docToSave as BusinessDocument).customerId !== 'passage') {
+          await triggerAuditLog('CUSTOMER_PAYMENT_RECEIVED', {
+            customerId: (docToSave as BusinessDocument).customerId,
+            customerName: (docToSave as BusinessDocument).customerName,
+            amount,
+            paymentMethod: method
+          });
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const addExpense = async (expData: Omit<Expense, 'id'>) => {
+    setIsSaving(true);
+    try {
+      const newExp: Expense = {
+        ...expData,
+        id: `exp-${Date.now()}`,
+      };
+      setExpenses(prev => [newExp, ...prev]);
+      await saveExpenseToFirestore(newExp, orgId);
+      await triggerAuditLog('EXPENSE_RECORDED', {
+        expenseId: newExp.id,
+        title: newExp.title,
+        amountTtc: newExp.amountTtc,
+        category: newExp.category
+      });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const updateExpense = async (updatedExp: Expense) => {
+    setIsSaving(true);
+    try {
+      setExpenses(prev => prev.map(e => e.id === updatedExp.id ? updatedExp : e));
+      await saveExpenseToFirestore(updatedExp, orgId);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const deleteExpense = async (id: string) => {
+    setIsSaving(true);
+    try {
+      setExpenses(prev => prev.filter(e => e.id !== id));
+      await deleteExpenseFromFirestore(id, orgId);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // Autogenerate recurring expenses that are due
@@ -518,6 +732,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
     setEmployees(prev => [newEmp, ...prev]);
     saveEmployeeToFirestore(newEmp, orgId);
+    triggerAuditLog('EMPLOYEE_CREATED', {
+      employeeId: newEmp.id,
+      employeeName: newEmp.name,
+      baseSalary: newEmp.baseSalary
+    }).catch(console.error);
   };
 
   const markAttendance = (employeeId: string, status: AttendanceRecord['status'], checkIn?: string) => {
@@ -570,6 +789,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
 
     setPayslips(prev => [newPayslip, ...prev]);
+    triggerAuditLog('PAYSLIP_CREATED', {
+      payslipId: newPayslip.id,
+      employeeName: newPayslip.employeeName,
+      netPayable: newPayslip.netPayable,
+      month: newPayslip.month
+    }).catch(console.error);
   };
 
   const processPosSale = (cart: PosCartItem[], method: PaymentMethod, customerId?: string) => {
@@ -672,6 +897,21 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (method === 'kreddy' && cust) {
       adjustKreddyBalance(cust.id, finalAmount);
     }
+
+    // Log Business Events for POS Sale & Stock
+    triggerAuditLog('SALE_CREATED', {
+      saleId: newDoc.id,
+      amountTtc: finalAmount,
+      paymentMethod: method
+    }).catch(console.error);
+
+    cart.forEach(item => {
+      triggerAuditLog('STOCK_SOLD', {
+        productId: item.product.id,
+        productName: item.product.name,
+        quantity: item.quantity
+      }).catch(console.error);
+    });
 
     // 4. Update Cash Register Session
     setCashSession(prev => {
@@ -777,6 +1017,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         isOnline,
         pendingSyncCount,
         triggerManualSync,
+        isLoadingInitialData,
+        isSaving,
+        setIsSaving,
+        businessEvents,
+        setBusinessEvents,
+        triggerAuditLog,
       }}
     >
       {children}

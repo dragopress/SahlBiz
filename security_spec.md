@@ -239,3 +239,75 @@ SahlBiz implements a **Modular Monolith** backend architecture, grouping our 17 
    * *Responsibilities*: Employees registration, CNSS/AMO social security deductions, and income tax (IR) payroll calculation.
 8. **AI Module (`server/modules/ai`)**
    * *Responsibilities*: "L'Mawoun" Conversational assistant, context-data retrieval, and automated receipt OCR scanner extraction.
+
+---
+
+## 6. Schema Validation & Business Constraints
+
+SahlBiz implements a Zero-Trust data ingestion policy. No request payload (`req.body`, `req.query`, or `req.params`) is ever trusted directly. All operational inputs are parsed and sanitized through **Zod Schema Validation Middleware**, ensuring strict type checks, field constraints, and compliance with Moroccan business regulations.
+
+### Validation Engine Lifecycle
+```
+     [API Request Received]
+                ↓
+    [Auth & Tenant Verification]   ← Checks authenticated identity and extracts tenant orgId.
+                ↓
+      [Zod Schema SafeParse]       ← Validates params, query, and body. Sanitizes extra fields.
+                ↓
+    [Business Constraints Check]   ← Evaluates custom logic (e.g. cash limits, SMIG floors).
+                ↓
+    [Handler Execution (Safe)]     ← Uses ONLY verified, sanitized, and typed parameters.
+```
+
+### Key Business Constraints Programmatically Checked on Server
+1. **Fiscal Deductibility (Finance)**: Cash-based expenses are legally limited under Moroccan Tax Law. SahlBiz programmatically blocks any cash expense exceeding **5,000 MAD TTC**, prompting the user to select check or bank transfer.
+2. **SMIG Compliance (HR)**: Base salaries for employees are checked against the Moroccan legal SMIG limit of **3,120 MAD per month**.
+3. **Credit Limit Protection (CRM)**: Initial customer credit account balances (Kreddy) are checked to ensure they do not exceed their assigned tenant-level Credit Limit.
+4. **Margin Integrity (Catalog)**: Creating products with a selling price lower than the unit cost price is blocked to prevent accidental loss-making operations.
+5. **Overpayment Prevention (Billing)**: Recorded payment amounts against an active invoice are validated to ensure they never exceed the remaining outstanding balance.
+
+---
+
+## 7. Idempotency Protection System
+
+Moroccan retail and commercial spaces (such as traditional wholesale markets or souks) frequently suffer from unstable internet connectivity. To prevent dual-billing, duplicated stock deductions, or erroneous ledger entries when PWA clients retry failed requests, SahlBiz enforces **Idempotency Protection** on all core side-effecting operations.
+
+### Deterministic Key Formula
+SahlBiz calculates a unique, highly specific transaction hash derived from client-provided headers or body values:
+$$\text{Idempotency Key} = \text{organizationId} + \text{deviceId} + \text{localTransactionId}$$
+
+*   **`organizationId`**: Automatically extracted from the secure authenticated JWT session context.
+*   **`deviceId`**: Identifies the unique client terminal (PWA, mobile, or register). Provided via `X-Device-ID` header or request body.
+*   **`localTransactionId`**: A client-generated GUID assigned at the instant of transaction staging. Provided via `X-Local-Transaction-ID` header or request body.
+
+### Protected API Enclaves
+Idempotency decorators are integrated across all 8 critical operational gateways:
+1.  **POS Sales** (`POST /api/billing/sales`): Prevents duplicate cash register transactions.
+2.  **Payments** (`POST /api/billing/payments`): Enforces once-and-only-once payment registration against open invoices.
+3.  **Invoice Creation** (`POST /api/billing/invoices`): Disallows generating duplicate document receipts.
+4.  **Stock Movements** (`POST /api/catalog/inventory/adjust`): Guarantees inventory counts remain accurate under retries.
+5.  **Expense Creation** (`POST /api/finance/expenses`): Safeguards corporate accounts from duplicated charge postings.
+6.  **Purchase Receiving** (`POST /api/catalog/purchases/receive`): Blocks recording incoming supplier products twice.
+7.  **Accounting Entries** (`POST /api/finance/journal`): Eliminates duplicate debit/credit journal ledger adjustments.
+8.  **Offline Synchronization** (`POST /api/sync`): Ensures multi-packet offline sync streams do not write redundant sales or updates.
+
+### Cache Lookup Lifecycle
+```
+ [Client Post Request]
+          ↓
+  [Extract Headers]        ← X-Device-ID & X-Local-Transaction-ID
+          ↓
+   [Verify Cache]          ← Is 'idem:orgId:deviceId:localTxId' registered?
+    ├── YES ───────────────→ [Return Cached 2xx/4xx Response] (Instant, no DB write)
+    └── NO
+         ↓
+  [Execute Business Logic]
+          ↓
+   [Capture Response]
+          ↓
+   [Commit to Cache]       ← Stores statusCode and responseBody (TTL: 24h)
+          ↓
+  [Dispatch to Client]
+```
+
+

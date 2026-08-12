@@ -1,76 +1,78 @@
 import express from "express";
 import { z } from "zod";
-import { ServerUser, AuditLog } from "../types";
-import { ROLE_PERMISSIONS, UserRole } from "../../src/lib/rbac";
+import { ServerUser } from "../types";
+import { UserRole } from "../../src/lib/rbac";
+import { sendStandardError } from "../utils/errors";
+import { AuthController } from "../../src/services/auth/AuthController";
 
 export const authRouter = express.Router();
 
-// Auth Validator
-const signupSchema = z.object({
-  email: z.string().email("Invalid email address"),
-  role: z.enum(["owner", "admin", "manager", "accountant", "cashier", "salesperson", "inventory_manager", "hr_manager", "viewer"]),
-  orgId: z.string().min(3, "Organization ID is required")
-});
-
-const loginSchema = z.object({
-  email: z.string().email("Invalid email address"),
-  password: z.string().min(6, "Password must be at least 6 characters")
-});
-
-// Authentication Service & Repository (Simulated with robust, persistent data logic)
-export class AuthService {
-  static async registerUser(data: { email: string; role: UserRole; orgId: string }, actorEmail: string): Promise<ServerUser> {
-    // Zero-Trust security rules on server: Block self-promotion to global admin role
-    if (data.role === "admin" && actorEmail !== "admin@sahlbiz.ma") {
-      throw new Error("ROLE_ESCALATION_BLOCKED: Only SahlBiz global administrators can register admin profiles.");
-    }
-
-    return {
-      uid: `usr_${Math.random().toString(36).substring(2, 11)}`,
-      email: data.email,
-      orgId: data.orgId,
-      role: data.role
-    };
-  }
-}
-
-// Controller & Routes
-authRouter.post("/register", async (req: any, res: any) => {
+// Routes with Structured error handling delegating to controller
+authRouter.post("/register", async (req: express.Request, res: express.Response) => {
   try {
-    const parseResult = signupSchema.safeParse(req.body);
-    if (!parseResult.success) {
-      return res.status(400).json({ success: false, error: "VALIDATION_ERROR", details: parseResult.error.format() });
+    const result = await AuthController.register(req.body);
+    if (!result.success) {
+      const code = result.error?.code || "REGISTRATION_FAILED";
+      const status = code === "INVALID_BODY" ? 400 : 403;
+      return sendStandardError(res, status, code as any, result.error?.message || "Registration failed.", result.error?.details);
     }
-
-    const newUser = await AuthService.registerUser(parseResult.data, req.user?.email || "");
-    
-    return res.status(201).json({
-      success: true,
-      message: "User registration successfully initiated on server.",
-      data: newUser
-    });
+    return res.status(201).json(result);
   } catch (error: any) {
-    return res.status(403).json({ success: false, error: "AUTH_ERROR", message: error.message });
+    return sendStandardError(res, 500, "INTERNAL_ERROR", error.message);
   }
 });
 
-authRouter.post("/login", (req, res) => {
-  const parseResult = loginSchema.safeParse(req.body);
-  if (!parseResult.success) {
-    return res.status(400).json({ success: false, error: "VALIDATION_ERROR", details: parseResult.error.format() });
-  }
-
-  // Safe authentication token payload mock creation
-  const mockToken = `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoidXNyX2RlbW9fbW9ub2xpdGgiLCJlbWFpbCI6IiR7cGFyc2VSZXN1bHQuZGF0YS5lbWFpbH0iLCJvcmdJZCI6Im9yZ19kZW1vX21vbm9saXRoIiwicm9sZSI6Im93bmVyIiwiZXhwIjoxNzk3MDM0ODAwfQ.dummy_signature`;
-  
-  res.json({
-    success: true,
-    token: mockToken,
-    user: {
-      uid: "usr_demo_monolith",
-      email: parseResult.data.email,
-      orgId: "org_demo_monolith",
-      role: "owner"
+authRouter.post("/login", async (req: express.Request, res: express.Response) => {
+  try {
+    const result = await AuthController.login(req.body);
+    if (!result.success) {
+      const code = result.error?.code || "AUTHENTICATION_ERROR";
+      const status = code === "INVALID_BODY" ? 400 : 401;
+      return sendStandardError(res, status, code as any, result.error?.message || "Login failed.", result.error?.details);
     }
-  });
+    return res.json(result);
+  } catch (error: any) {
+    return sendStandardError(res, 500, "INTERNAL_ERROR", error.message);
+  }
 });
+
+authRouter.post("/verify-session", async (req: express.Request, res: express.Response) => {
+  try {
+    const token = req.body.token || req.headers.authorization?.split(" ")[1] || "";
+    const result = await AuthController.verifySession(token);
+    if (!result.success) {
+      const code = result.error?.code || "AUTHENTICATION_ERROR";
+      return sendStandardError(res, 401, code as any, result.error?.message || "Invalid session.");
+    }
+    return res.json(result);
+  } catch (error: any) {
+    return sendStandardError(res, 500, "INTERNAL_ERROR", error.message);
+  }
+});
+
+authRouter.get("/role/:roleName", async (req: express.Request, res: express.Response) => {
+  try {
+    const result = await AuthController.getRoleDetails(req.params.roleName);
+    if (!result.success) {
+      return sendStandardError(res, 404, "NOT_FOUND", result.error?.message || "Role not found.");
+    }
+    return res.json(result);
+  } catch (error: any) {
+    return sendStandardError(res, 500, "INTERNAL_ERROR", error.message);
+  }
+});
+
+authRouter.post("/context", async (req: express.Request, res: express.Response) => {
+  try {
+    const { userId, orgId } = req.body;
+    const result = await AuthController.updateOrganizationalContext(userId, orgId);
+    if (!result.success) {
+      const code = result.error?.code || "VALIDATION_ERROR";
+      return sendStandardError(res, 400, code as any, result.error?.message || "Context assignment failed.");
+    }
+    return res.json(result);
+  } catch (error: any) {
+    return sendStandardError(res, 500, "INTERNAL_ERROR", error.message);
+  }
+});
+

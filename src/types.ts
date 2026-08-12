@@ -240,3 +240,37 @@ export interface PricingPlan {
   accountantExport: boolean;
   badge?: string;
 }
+
+export type BusinessEventType =
+  | 'SALE_CREATED'
+  | 'SALE_CANCELLED'
+  | 'SALE_RETURNED'
+  | 'PAYMENT_RECEIVED'
+  | 'PAYMENT_REFUNDED'
+  | 'PURCHASE_CREATED'
+  | 'PURCHASE_RECEIVED'
+  | 'PURCHASE_RETURNED'
+  | 'EXPENSE_RECORDED'
+  | 'INVOICE_CREATED'
+  | 'INVOICE_CANCELLED'
+  | 'STOCK_RECEIVED'
+  | 'STOCK_SOLD'
+  | 'STOCK_ADJUSTED'
+  | 'STOCK_RETURNED'
+  | 'CUSTOMER_CREDIT_CREATED'
+  | 'CUSTOMER_PAYMENT_RECEIVED'
+  | 'EMPLOYEE_CREATED'
+  | 'PAYSLIP_CREATED';
+
+export interface BusinessEvent {
+  id: string;
+  eventType: BusinessEventType;
+  timestamp: string;
+  userId: string;
+  userName: string;
+  orgId: string;
+  payload: any;
+  hash: string;
+  status: 'valid' | 'corrupted' | 'unverified';
+}
+

@@ -17,7 +17,8 @@ import {
   Crown,
   Settings,
   ShieldCheck,
-  ChevronRight
+  ChevronRight,
+  Fingerprint
 } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
@@ -42,6 +43,7 @@ export const Sidebar: React.FC = () => {
     { id: 'accountant', labelKey: 'accountant', icon: Calculator },
     { id: 'pricing', labelKey: 'pricing', icon: Crown },
     { id: 'settings', labelKey: 'settings', icon: Settings },
+    { id: 'audit', labelKey: 'audit', icon: Fingerprint },
   ];
 
   if (isAdmin) {

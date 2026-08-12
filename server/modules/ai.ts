@@ -1,6 +1,7 @@
 import express from "express";
 import { z } from "zod";
 import { GoogleGenAI } from "@google/genai";
+import { validateRequest } from "../middleware/validation";
 
 export const aiRouter = express.Router();
 
@@ -35,8 +36,12 @@ const assistantSchema = z.object({
 });
 
 const ocrSchema = z.object({
-  image: z.string().min(1, "Image base64 data is required"),
+  image: z.string().optional(),
+  imageBase64: z.string().optional(),
   mimeType: z.string().optional().default("image/jpeg")
+}).refine(data => !!(data.image || data.imageBase64), {
+  message: "Either 'image' or 'imageBase64' containing raw base64 data is required",
+  path: ["image"]
 });
 
 // AI Service Boundary
@@ -162,14 +167,11 @@ Return strictly valid JSON only.
 }
 
 // Routes
-aiRouter.post("/assistant", async (req: any, res) => {
+aiRouter.post("/assistant", validateRequest({
+  body: assistantSchema
+}), async (req: any, res) => {
   try {
-    const parseResult = assistantSchema.safeParse(req.body);
-    if (!parseResult.success) {
-      return res.status(400).json({ success: false, error: "VALIDATION_ERROR", details: parseResult.error.format() });
-    }
-
-    const { prompt, contextData } = parseResult.data;
+    const { prompt, contextData } = req.body;
     const userContext = {
       userEmail: req.user?.email || "unknown@sahlbiz.ma",
       orgId: req.user?.orgId || "org_unknown",
@@ -179,38 +181,49 @@ aiRouter.post("/assistant", async (req: any, res) => {
     const result = await AIService.processAssistantPrompt(prompt, userContext, contextData);
     return res.json(result);
   } catch (error: any) {
-    return res.status(500).json({ success: false, error: "AI_ERROR", message: error.message });
+    return res.status(500).json({
+      success: false,
+      error: {
+        code: "AI_ERROR",
+        message: error.message,
+        requestId: `req_${Math.random().toString(36).substring(2, 11)}`
+      }
+    });
   }
 });
 
-aiRouter.post("/ocr", async (req: any, res) => {
-  try {
-    const normalizedBody = {
-      image: req.body.image || req.body.imageBase64,
-      mimeType: req.body.mimeType || "image/jpeg"
-    };
-
-    const parseResult = ocrSchema.safeParse(normalizedBody);
-    if (!parseResult.success) {
-      return res.status(400).json({ success: false, error: "VALIDATION_ERROR", details: parseResult.error.format() });
+aiRouter.post("/ocr", validateRequest({
+  body: ocrSchema,
+  businessConstraints: (req: any) => {
+    const rawImage = req.body.image || req.body.imageBase64 || "";
+    // Size constraints: Max 12MB raw string
+    if (rawImage.length > 12 * 1024 * 1024) {
+      return "PAYLOAD_TOO_LARGE: Uploaded image exceeds the maximum supported size constraint of 10MB.";
     }
 
-    const { image, mimeType } = parseResult.data;
-
-    // MIME Validation
+    const mimeType = req.body.mimeType || "image/jpeg";
     const allowedMimeTypes = ["image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf"];
     if (!allowedMimeTypes.includes(mimeType.toLowerCase())) {
-      return res.status(400).json({ success: false, error: "VALIDATION_ERROR", message: `Unsupported MIME type: ${mimeType}` });
+      return `UNSUPPORTED_MEDIA_TYPE: Supported formats are jpeg, png, webp, gif, and pdf. Found: ${mimeType}`;
     }
 
-    // Size limit
-    if (image.length > 14 * 1024 * 1024) {
-      return res.status(400).json({ success: false, error: "VALIDATION_ERROR", message: "File size exceeds limit of 10MB" });
-    }
+    return null;
+  }
+}), async (req: any, res) => {
+  try {
+    const image = req.body.image || req.body.imageBase64 || "";
+    const mimeType = req.body.mimeType || "image/jpeg";
 
     const result = await AIService.processReceiptOcr(image, mimeType);
     return res.json(result);
   } catch (error: any) {
-    return res.status(500).json({ success: false, error: "OCR_ERROR", message: error.message });
+    return res.status(500).json({
+      success: false,
+      error: {
+        code: "OCR_ERROR",
+        message: error.message,
+        requestId: `req_${Math.random().toString(36).substring(2, 11)}`
+      }
+    });
   }
 });

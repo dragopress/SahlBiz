@@ -1,23 +1,24 @@
 import express from "express";
 import { z } from "zod";
 import { Customer, CommunicationLog } from "../types";
+import { validateRequest } from "../middleware/validation";
 
 export const crmRouter = express.Router();
 
 // CRM Zod Schemas
 const customerSchema = z.object({
-  name: z.string().min(1).max(100),
+  name: z.string().min(1, "Customer name is required").max(100),
   phone: z.string().max(30),
   pricingTier: z.enum(["standard", "wholesale", "vip"]).optional().default("standard"),
-  creditLimit: z.number().optional().default(5000),
-  kreddyBalance: z.number().optional().default(0)
+  creditLimit: z.number().nonnegative("Credit limit must be a positive number").optional().default(5000),
+  kreddyBalance: z.number().nonnegative("Initial balance must be a positive number").optional().default(0)
 });
 
 const communicationSchema = z.object({
-  recipientName: z.string().min(1),
-  recipientPhoneOrEmail: z.string().min(1),
+  recipientName: z.string().min(1, "Recipient name is required"),
+  recipientPhoneOrEmail: z.string().min(1, "Recipient contact details are required"),
   type: z.enum(["whatsapp", "email", "sms"]),
-  message: z.string().min(1)
+  message: z.string().min(1, "Message content cannot be empty")
 });
 
 // Customer & Communication Service Boundary
@@ -27,7 +28,6 @@ export class CRMService {
 
   static async getCustomers(orgId: string): Promise<Customer[]> {
     if (!this.customers.has(orgId)) {
-      // Seed default customers for a stellar demonstration
       this.customers.set(orgId, [
         { id: "cust_1", name: "Youssef El Amrani", phone: "+212612345678", pricingTier: "standard", creditLimit: 5000, kreddyBalance: 1450, createdAt: new Date().toISOString(), orgId },
         { id: "cust_2", name: "Fatima Zahra", phone: "+212687654321", pricingTier: "wholesale", creditLimit: 20000, kreddyBalance: 0, createdAt: new Date().toISOString(), orgId }
@@ -67,7 +67,7 @@ export class CRMService {
       recipientName: log.recipientName || "Unknown",
       recipientPhoneOrEmail: log.recipientPhoneOrEmail || "",
       type: log.type || "whatsapp",
-      status: "sent", // Simulated immediate success
+      status: "sent",
       message: log.message || "",
       date: new Date().toISOString(),
       orgId
@@ -78,33 +78,34 @@ export class CRMService {
   }
 }
 
-// Routes
-crmRouter.get("/customers", async (req: any, res) => {
+// Routes with validateRequest
+crmRouter.get("/customers", validateRequest({}), async (req: any, res) => {
   const customers = await CRMService.getCustomers(req.user.orgId);
-  res.json({ success: true, data: customers });
+  return res.json({ success: true, data: customers });
 });
 
-crmRouter.post("/customers", async (req: any, res) => {
-  const parseResult = customerSchema.safeParse(req.body);
-  if (!parseResult.success) {
-    return res.status(400).json({ success: false, details: parseResult.error.format() });
+crmRouter.post("/customers", validateRequest({
+  body: customerSchema,
+  businessConstraints: (req: any) => {
+    const { kreddyBalance, creditLimit } = req.body;
+    if (kreddyBalance > creditLimit) {
+      return `CREDIT_LIMIT_EXCEEDED: Customer's initial Kreddy balance (${kreddyBalance} MAD) cannot exceed their defined credit limit (${creditLimit} MAD).`;
+    }
+    return null;
   }
-
-  const customer = await CRMService.createCustomer(req.user.orgId, parseResult.data);
-  res.status(201).json({ success: true, data: customer });
+}), async (req: any, res) => {
+  const customer = await CRMService.createCustomer(req.user.orgId, req.body);
+  return res.status(201).json({ success: true, data: customer });
 });
 
-crmRouter.get("/communications", async (req: any, res) => {
+crmRouter.get("/communications", validateRequest({}), async (req: any, res) => {
   const logs = await CRMService.getCommunicationLogs(req.user.orgId);
-  res.json({ success: true, data: logs });
+  return res.json({ success: true, data: logs });
 });
 
-crmRouter.post("/communications", async (req: any, res) => {
-  const parseResult = communicationSchema.safeParse(req.body);
-  if (!parseResult.success) {
-    return res.status(400).json({ success: false, details: parseResult.error.format() });
-  }
-
-  const log = await CRMService.logCommunication(req.user.orgId, parseResult.data);
-  res.status(201).json({ success: true, data: log });
+crmRouter.post("/communications", validateRequest({
+  body: communicationSchema
+}), async (req: any, res) => {
+  const log = await CRMService.logCommunication(req.user.orgId, req.body);
+  return res.status(201).json({ success: true, data: log });
 });

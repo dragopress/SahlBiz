@@ -1,25 +1,27 @@
 import express from "express";
 import { z } from "zod";
 import { Expense, JournalEntry, AuditLog } from "../types";
+import { validateRequest } from "../middleware/validation";
+import { requireIdempotency } from "../middleware/idempotency";
 
 export const financeRouter = express.Router();
 
 // Finance Zod Schemas
 const expenseSchema = z.object({
-  title: z.string().min(1).max(150),
+  title: z.string().min(1, "Title is required").max(150),
   category: z.enum(["loyer", "salaires", "matieres", "transport", "electricite", "impots", "entretiens", "divers"]),
-  amountHt: z.number().positive(),
-  tvaRate: z.number().nonnegative(),
-  vendorName: z.string().min(1),
+  amountHt: z.number().positive("Expense amount must be greater than zero"),
+  tvaRate: z.number().nonnegative("TVA rate cannot be negative"),
+  vendorName: z.string().min(1, "Vendor name is required"),
   vendorIce: z.string().max(30).optional(),
   paymentMethod: z.enum(["cash", "check", "traite", "cmi_card", "transfer", "kreddy"])
 });
 
-const journalSchema = z.object({
-  description: z.string().min(1),
-  debit: z.number().nonnegative(),
-  credit: z.number().nonnegative(),
-  accountCode: z.string().min(1)
+const manualJournalSchema = z.object({
+  description: z.string().min(1, "Description is required").max(200),
+  debit: z.number().nonnegative("Debit cannot be negative").default(0),
+  credit: z.number().nonnegative("Credit cannot be negative").default(0),
+  accountCode: z.string().min(1, "Account code is required")
 });
 
 // Expenses, Accounting, and Audit Service Boundary
@@ -143,18 +145,26 @@ export class FinanceService {
 }
 
 // Routes
-financeRouter.get("/expenses", async (req: any, res) => {
+financeRouter.get("/expenses", validateRequest({}), async (req: any, res) => {
   const expenses = await FinanceService.getExpenses(req.user.orgId);
-  res.json({ success: true, data: expenses });
+  return res.json({ success: true, data: expenses });
 });
 
-financeRouter.post("/expenses", async (req: any, res) => {
-  const parseResult = expenseSchema.safeParse(req.body);
-  if (!parseResult.success) {
-    return res.status(400).json({ success: false, details: parseResult.error.format() });
-  }
+financeRouter.post("/expenses", requireIdempotency(), validateRequest({
+  body: expenseSchema,
+  businessConstraints: (req: any) => {
+    // Moroccan Fiscal Constraint: Cash payments for commercial transactions are capped under legal limits (5000 MAD TTC) for tax deductibility.
+    const { paymentMethod, amountHt, tvaRate } = req.body;
+    const tvaAmount = amountHt * (tvaRate / 100);
+    const amountTtc = amountHt + tvaAmount;
 
-  const expense = await FinanceService.createExpense(req.user.orgId, parseResult.data);
+    if (paymentMethod === "cash" && amountTtc > 5000) {
+      return `CASH_LIMIT_EXCEEDED: Under Moroccan Finance Law, cash expenses exceeding 5,000 MAD TTC cannot be recorded as deductible expenses. Please select a bank transfer or cheque payment method.`;
+    }
+    return null;
+  }
+}), async (req: any, res) => {
+  const expense = await FinanceService.createExpense(req.user.orgId, req.body);
   
   // Log critical creation action to the audit logs boundary
   await FinanceService.logAuditAction(
@@ -165,15 +175,31 @@ financeRouter.post("/expenses", async (req: any, res) => {
     `Recorded expense '${expense.title}' of ${expense.amountTtc} MAD`
   );
 
-  res.status(201).json({ success: true, data: expense });
+  return res.status(201).json({ success: true, data: expense });
 });
 
-financeRouter.get("/journal", async (req: any, res) => {
+financeRouter.get("/journal", validateRequest({}), async (req: any, res) => {
   const entries = await FinanceService.getJournalEntries(req.user.orgId);
-  res.json({ success: true, data: entries });
+  return res.json({ success: true, data: entries });
 });
 
-financeRouter.get("/audit", async (req: any, res) => {
+financeRouter.post("/journal", requireIdempotency(), validateRequest({
+  body: manualJournalSchema
+}), async (req: any, res) => {
+  const entry = await FinanceService.addJournalEntry(req.user.orgId, req.body);
+  
+  await FinanceService.logAuditAction(
+    req.user.orgId,
+    req.user.uid,
+    req.user.email,
+    "MANUAL_JOURNAL_ENTRY",
+    `Created journal entry '${entry.description}' for account ${entry.accountCode}`
+  );
+
+  return res.status(201).json({ success: true, data: entry });
+});
+
+financeRouter.get("/audit", validateRequest({}), async (req: any, res) => {
   const logs = await FinanceService.getAuditLogs(req.user.orgId);
-  res.json({ success: true, data: logs });
+  return res.json({ success: true, data: logs });
 });

@@ -16,6 +16,7 @@ import { AccountantModule } from './components/Accountant/AccountantModule';
 import { PricingModal } from './components/Pricing/PricingModal';
 import { SettingsModule } from './components/Settings/SettingsModule';
 import { ControlPlaneModule } from './components/Admin/ControlPlaneModule';
+import { AuditModule } from './components/Audit/AuditModule';
 import { AiAssistantModal } from './components/AiAssistant/AiAssistantModal';
 import { WhatsAppModal } from './components/WhatsApp/WhatsAppModal';
 import { Hexagon } from 'lucide-react';
@@ -76,6 +77,8 @@ const AppContent: React.FC<{ onShowLanding: () => void }> = ({ onShowLanding }) 
         return <PricingModal onClose={() => setActiveModule('dashboard')} />;
       case 'settings':
         return <SettingsModule />;
+      case 'audit':
+        return <AuditModule />;
       case 'admin':
         return <ControlPlaneModule />;
       default:
