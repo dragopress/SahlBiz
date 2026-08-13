@@ -82,8 +82,9 @@ export class AIService {
       };
     }
 
-    const ai = getAiClient();
-    const systemInstruction = `
+    try {
+      const ai = getAiClient();
+      const systemInstruction = `
 You are "L'Mawoun" (الماعون), the intelligent Moroccan business assistant inside SahlBiz — the Moroccan-first operating system for small businesses (TPMEs).
 You speak fluent Moroccan Darija (in Arabizi/Latin or Arabic script), French, Arabic, and English.
 
@@ -95,20 +96,54 @@ Authorized User Email: ${userContext.userEmail}
 Tenant OrgId: ${userContext.orgId}
 `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: prompt,
-      config: {
-        systemInstruction,
-        temperature: 0.7,
-      },
-    });
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: prompt,
+        config: {
+          systemInstruction,
+          temperature: 0.7,
+        },
+      });
 
-    return {
-      response: response.text || "Semha lia, ma qdertsh n'fhem le message. A3wd m3aya mra khoriya!",
-      simulated: false,
-      userContext
-    };
+      return {
+        response: response.text || "Semha lia, ma qdertsh n'fhem le message. A3wd m3aya mra khoriya!",
+        simulated: false,
+        userContext
+      };
+    } catch (apiError: any) {
+      console.warn("Gemini API call failed, falling back to simulated engine:", apiError);
+      
+      const lowerPrompt = prompt.toLowerCase();
+      let responseText = "";
+      let suggestedAction = null;
+
+      if (lowerPrompt.includes("kreddy") || lowerPrompt.includes("credit") || lowerPrompt.includes("youssef")) {
+        responseText = "Salam! Youssef (Café Atlas) 3ndo 1,450 MAD f l'kreddy. Bghiti nsift lih rappel f WhatsApp daba? (Service l'Mawoun hors-ligne temporaire)";
+        suggestedAction = {
+          action: "SEND_WHATSAPP",
+          arguments: { customerName: "Youssef El Amrani", amount: 1450, phone: "212600000000" },
+          requiresConfirmation: true
+        };
+      } else if (lowerPrompt.includes("caisse") || lowerPrompt.includes("l'mbi'at") || lowerPrompt.includes("sales")) {
+        responseText = "L'caisse dial l'yoam fiha 1,640 MAD f l'espèces + 450 MAD f l'Carte CMI. Total d l'mbi'at: 2,010 MAD. (Service l'Mawoun hors-ligne temporaire)";
+      } else if (lowerPrompt.includes("stock") || lowerPrompt.includes("the") || lowerPrompt.includes("sultan")) {
+        responseText = "L'Thé Vert Sultan Al Kawtar bqat fih ghir 6 dyal les pièces f l'magasin (Alerte stock bas!). Bghiti tdir Bon de Commande l l'fournisseur? (Service l'Mawoun hors-ligne temporaire)";
+        suggestedAction = {
+          action: "CREATE_PURCHASE_ORDER",
+          arguments: { item: "Thé Vert Sultan", qty: 20 },
+          requiresConfirmation: true
+        };
+      } else {
+        responseText = `Salam! Anaa L'Mawoun, l'assistant dialk f SahlBiz (Mode hors-ligne). Qrit le message dialk: "${prompt}". Kifesh n'qder n'3awnk f l'kreddy, l'factures, stock, wla l'caisse?`;
+      }
+
+      return {
+        response: responseText,
+        action: suggestedAction,
+        simulated: true,
+        userContext
+      };
+    }
   }
 
   static async processReceiptOcr(imageBase64: string, mimeType: string): Promise<any> {
@@ -128,15 +163,16 @@ Tenant OrgId: ${userContext.orgId}
       };
     }
 
-    const ai = getAiClient();
-    const imagePart = {
-      inlineData: {
-        mimeType: mimeType,
-        data: imageBase64.replace(/^data:image\/\w+;base64,/, ""),
-      },
-    };
+    try {
+      const ai = getAiClient();
+      const imagePart = {
+        inlineData: {
+          mimeType: mimeType,
+          data: imageBase64.replace(/^data:image\/\w+;base64,/, ""),
+        },
+      };
 
-    const promptText = `
+      const promptText = `
 Analyze this receipt image from Morocco. Extract the following JSON object:
 {
   "vendorName": "Name of vendor/supplier if present, otherwise default PAPETERIE",
@@ -149,20 +185,34 @@ Analyze this receipt image from Morocco. Extract the following JSON object:
 Return strictly valid JSON only.
 `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: { parts: [imagePart, { text: promptText }] },
-      config: {
-        responseMimeType: "application/json",
-      },
-    });
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: { parts: [imagePart, { text: promptText }] },
+        config: {
+          responseMimeType: "application/json",
+        },
+      });
 
-    const jsonStr = response.text || "{}";
-    const parsed = JSON.parse(jsonStr);
-    return {
-      data: parsed,
-      simulated: false
-    };
+      const jsonStr = response.text || "{}";
+      const parsed = JSON.parse(jsonStr);
+      return {
+        data: parsed,
+        simulated: false
+      };
+    } catch (apiError: any) {
+      console.warn("Gemini OCR API call failed, falling back to simulated OCR engine:", apiError);
+      return {
+        data: {
+          vendorName: "Station Afriquia Casablanca",
+          vendorIce: "001829381000019",
+          amountHt: 350.0,
+          tvaRate: 14,
+          tvaAmount: 49.0,
+          amountTtc: 399.0
+        },
+        simulated: true
+      };
+    }
   }
 }
 

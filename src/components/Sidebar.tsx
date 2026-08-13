@@ -18,7 +18,8 @@ import {
   Settings,
   ShieldCheck,
   ChevronRight,
-  Fingerprint
+  Fingerprint,
+  Wallet
 } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
@@ -40,6 +41,7 @@ export const Sidebar: React.FC = () => {
     { id: 'expenses', labelKey: 'expenses', icon: Receipt },
     { id: 'hr', labelKey: 'hr', icon: Briefcase },
     { id: 'pos', labelKey: 'pos', icon: ShoppingBag },
+    { id: 'cash-register', labelKey: 'cashRegister', icon: Wallet },
     { id: 'accountant', labelKey: 'accountant', icon: Calculator },
     { id: 'pricing', labelKey: 'pricing', icon: Crown },
     { id: 'settings', labelKey: 'settings', icon: Settings },

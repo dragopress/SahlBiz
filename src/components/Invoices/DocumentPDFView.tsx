@@ -68,7 +68,10 @@ export const DocumentPDFView: React.FC<DocumentPDFViewProps> = ({ document: doc,
 
             <div className="text-left sm:text-right space-y-1 bg-slate-50 p-4 rounded-xl border border-slate-200 w-full sm:w-auto">
               <div className="text-lg font-black uppercase text-slate-900 tracking-wider">
-                {doc.type === 'facture' ? 'FACTURE' : doc.type === 'devis' ? 'DEVIS / OFFRE' : 'BON DE LIVRAISON'}
+                {doc.type === 'facture' ? 'FACTURE' : 
+                 doc.type === 'devis' ? 'DEVIS / OFFRE' : 
+                 doc.type === 'bl' ? 'BON DE LIVRAISON' : 
+                 doc.type === 'credit_note' ? "FACTURE D'AVOIR" : 'NOTE DE DÉBIT'}
               </div>
               <div className="font-mono font-bold text-emerald-700 text-sm">{doc.number}</div>
               <div className="text-[11px] text-slate-600">Date d'émission: <b>{doc.date}</b></div>
@@ -86,6 +89,11 @@ export const DocumentPDFView: React.FC<DocumentPDFViewProps> = ({ document: doc,
                   ICE Client: {doc.customerIce}
                 </div>
               )}
+              {doc.notes && (
+                <div className="text-[11px] text-slate-600 mt-1 italic">
+                  Note: {doc.notes}
+                </div>
+              )}
             </div>
 
             <div className="sm:text-right">
@@ -98,13 +106,26 @@ export const DocumentPDFView: React.FC<DocumentPDFViewProps> = ({ document: doc,
               </div>
               <div className="mt-1">
                 <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                  doc.status === 'paid' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
+                  doc.status === 'paid' ? 'bg-emerald-100 text-emerald-800' :
+                  doc.status === 'cancelled' ? 'bg-slate-200 text-slate-700' :
+                  doc.status === 'partially_paid' || doc.status === 'partial' ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-800'
                 }`}>
-                  Statut: {doc.status === 'paid' ? 'PAYÉE' : 'NON PAYÉE'}
+                  Statut: {
+                    doc.status === 'paid' ? 'PAYÉE' : 
+                    doc.status === 'cancelled' ? 'ANNULÉE' :
+                    doc.status === 'partially_paid' || doc.status === 'partial' ? 'PARTIELLEMENT PAYÉE' : 'ÉMISE / NON PAYÉE'
+                  }
                 </span>
               </div>
             </div>
           </div>
+
+          {/* Cancellation Reason if applicable */}
+          {doc.status === 'cancelled' && doc.cancellationReason && (
+            <div className="p-3 bg-red-50 border border-red-200 text-red-800 rounded-xl text-xs font-medium">
+              Motif d'annulation: <b>{doc.cancellationReason}</b>
+            </div>
+          )}
 
           {/* Line Items Table */}
           <div className="overflow-x-auto border border-slate-200 rounded-xl">
@@ -173,6 +194,56 @@ export const DocumentPDFView: React.FC<DocumentPDFViewProps> = ({ document: doc,
             </div>
 
           </div>
+
+          {/* Payment Allocations Section */}
+          {doc.paymentAllocations && doc.paymentAllocations.length > 0 && (
+            <div className="pt-4 border-t border-slate-100 space-y-2">
+              <h3 className="font-bold text-slate-900 text-xs uppercase tracking-wide">Historique des Règlements Allocations</h3>
+              <div className="border border-slate-200 rounded-lg overflow-hidden">
+                <table className="w-full text-left text-[11px]">
+                  <thead className="bg-slate-50 text-slate-700 font-bold uppercase text-[9px] border-b border-slate-200">
+                    <tr>
+                      <th className="p-2">Date</th>
+                      <th className="p-2">Mode</th>
+                      <th className="p-2">Référence</th>
+                      <th className="p-2">Notes</th>
+                      <th className="p-2 text-right">Montant (MAD)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-mono text-[10px]">
+                    {doc.paymentAllocations.map((alloc) => (
+                      <tr key={alloc.id} className="bg-white">
+                        <td className="p-2 font-sans">{alloc.date}</td>
+                        <td className="p-2 capitalize font-sans">{alloc.paymentMethod === 'cash' ? 'Espèces' : alloc.paymentMethod}</td>
+                        <td className="p-2">{alloc.reference || '-'}</td>
+                        <td className="p-2 font-sans">{alloc.notes || '-'}</td>
+                        <td className="p-2 text-right font-bold text-emerald-800">{formatMad(alloc.amount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Audit History (Small for Internal Reference) */}
+          {doc.auditHistory && doc.auditHistory.length > 0 && (
+            <div className="pt-4 border-t border-slate-100 space-y-1.5 print:hidden">
+              <h3 className="font-bold text-slate-500 text-[10px] uppercase tracking-wide">Journal d'Audit Immuable de la Pièce</h3>
+              <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200 space-y-1 text-[10px] font-mono text-slate-600">
+                {doc.auditHistory.map((audit) => (
+                  <div key={audit.id} className="flex justify-between items-start border-b border-slate-200/60 pb-1 last:border-0 last:pb-0">
+                    <span className="shrink-0 text-slate-400 mr-2">{audit.timestamp.replace('T', ' ').substring(0, 16)}</span>
+                    <span className="font-bold text-slate-700 uppercase shrink-0 mr-2">{audit.action}</span>
+                    <span className="grow text-slate-500 mr-2">({audit.userName}): {audit.notes}</span>
+                    <span className="shrink-0 bg-slate-200/70 text-slate-700 px-1.5 rounded text-[9px] font-bold">
+                      {audit.fromStatus || 'N/A'} ➜ {audit.toStatus}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Footer legal mention */}
           <div className="pt-6 border-t border-slate-200 text-center text-[10px] text-slate-500 italic">

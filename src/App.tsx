@@ -12,6 +12,7 @@ import { PurchasesModule } from './components/Purchases/PurchasesModule';
 import { ExpenseModule } from './components/Expenses/ExpenseModule';
 import { EmployeeModule } from './components/Employees/EmployeeModule';
 import { PosModule } from './components/POS/PosModule';
+import { CashRegisterModule } from './components/CashRegisterModule';
 import { AccountantModule } from './components/Accountant/AccountantModule';
 import { PricingModal } from './components/Pricing/PricingModal';
 import { SettingsModule } from './components/Settings/SettingsModule';
@@ -71,6 +72,8 @@ const AppContent: React.FC<{ onShowLanding: () => void }> = ({ onShowLanding }) 
         return <EmployeeModule />;
       case 'pos':
         return <PosModule />;
+      case 'cash-register':
+        return <CashRegisterModule />;
       case 'accountant':
         return <AccountantModule />;
       case 'pricing':

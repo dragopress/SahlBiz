@@ -215,6 +215,8 @@ export function canAccessModule(role: string | undefined, module: string): boole
       return hasPermission(role, 'employee.read');
     case 'pos':
       return hasPermission(role, 'sale.create');
+    case 'cash-register':
+      return hasPermission(role, 'sale.create') || hasPermission(role, 'accounting.read');
     case 'accountant':
       return hasPermission(role, 'accounting.read');
     case 'pricing':

@@ -38,7 +38,7 @@ service cloud.firestore {
     function isOrgMember(orgId) {
       return isSignedIn() && (
         orgId == request.auth.uid ||
-        orgId == "org_" + request.auth.uid.slice(0, 8) ||
+        (('org_' + request.auth.uid).startsWith(orgId) && orgId.size() >= 12) ||
         exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
          orgId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.orgId)
@@ -181,6 +181,38 @@ service cloud.firestore {
              emp.orgId is string && emp.orgId.size() <= 128;
     }
 
+    function isValidInventoryMovement(m) {
+      return m.id is string && m.id.size() <= 128 &&
+             m.organizationId is string && m.organizationId.size() <= 128 &&
+             m.productId is string && m.productId.size() <= 128 &&
+             m.productName is string && m.productName.size() <= 150 &&
+             m.type is string && (m.type == 'purchase' || m.type == 'sale' || m.type == 'return' || m.type == 'adjustment_in' || m.type == 'adjustment_out' || m.type == 'transfer' || m.type == 'opening_balance') &&
+             m.quantity is number && m.quantity >= 0 &&
+             m.createdAt is string && m.createdAt.size() <= 40 &&
+             m.createdBy is string && m.createdBy.size() <= 100;
+    }
+
+    function isValidBusinessEvent(ev) {
+      return ev.id is string && ev.id.size() <= 128 &&
+             ev.eventType is string && ev.eventType.size() <= 100 &&
+             ev.timestamp is string && ev.timestamp.size() <= 40 &&
+             ev.userId is string && ev.userId.size() <= 128 &&
+             ev.userName is string && ev.userName.size() <= 100 &&
+             ev.orgId is string && ev.orgId.size() <= 128 &&
+             ev.hash is string && ev.hash.size() <= 128 &&
+             ev.status is string && (ev.status == 'valid' || ev.status == 'corrupted' || ev.status == 'unverified');
+    }
+
+    function isValidCreditLedgerEntry(cle) {
+      return cle.id is string && cle.id.size() <= 128 &&
+             cle.customerId is string && cle.customerId.size() <= 128 &&
+             cle.type is string && (cle.type == 'opening_balance' || cle.type == 'credit_sale' || cle.type == 'payment' || cle.type == 'return' || cle.type == 'adjustment_plus' || cle.type == 'adjustment_minus') &&
+             cle.amount is number && cle.amount >= 0 &&
+             cle.createdAt is string && cle.createdAt.size() <= 40 &&
+             cle.createdBy is string && cle.createdBy.size() <= 100 &&
+             cle.orgId is string && cle.orgId.size() <= 128;
+    }
+
     // ==========================================
     // 3. SECURE ACCESS CONTROL PATH RULES
     // ==========================================
@@ -306,6 +338,39 @@ service cloud.firestore {
         allow update: if isValidId(orgId) && isValidId(employeeId) && hasPermission(orgId, 'employee.update') && incoming().orgId == orgId && isValidEmployee(incoming());
         allow delete: if isValidId(orgId) && isValidId(employeeId) && hasPermission(orgId, 'employee.delete');
       }
+
+      // InventoryMovements: strictly validates membership, 'product' roles/permissions, and matching tenant organizationId
+      match /inventoryMovements/{movementId} {
+        allow get: if isValidId(orgId) && isValidId(movementId) && isOrgMember(orgId) && hasPermission(orgId, 'product.read');
+        allow list: if isValidId(orgId) && isOrgMember(orgId) && hasPermission(orgId, 'product.read') && (resource == null || resource.data.organizationId == orgId);
+        allow create: if isValidId(orgId) && isValidId(movementId) && hasPermission(orgId, 'product.update') && incoming().organizationId == orgId && isValidInventoryMovement(incoming());
+      }
+
+      // Cash register, session, movement and reconciliation systems
+      match /cashRegisters/{registerId} {
+        allow read, write: if isValidId(orgId) && isOrgMember(orgId);
+      }
+      match /cashSessions/{sessionId} {
+        allow read, write: if isValidId(orgId) && isOrgMember(orgId);
+      }
+      match /cashMovements/{movementId} {
+        allow read, write: if isValidId(orgId) && isOrgMember(orgId);
+      }
+      match /cashReconciliations/{reconciliationId} {
+        allow read, write: if isValidId(orgId) && isOrgMember(orgId);
+      }
+
+      // BusinessEvents: read and create for organizational members with appropriate validation
+      match /businessEvents/{eventId} {
+        allow get, list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isValidId(orgId) && isValidId(eventId) && isOrgMember(orgId) && incoming().orgId == orgId && isValidBusinessEvent(incoming());
+      }
+
+      // CreditLedger: read and write for organizational members with customer read/update permissions and schema validation
+      match /creditLedger/{entryId} {
+        allow get, list: if isValidId(orgId) && isOrgMember(orgId) && hasPermission(orgId, 'customer.read');
+        allow create: if isValidId(orgId) && isValidId(entryId) && hasPermission(orgId, 'customer.create') && incoming().orgId == orgId && isValidCreditLedgerEntry(incoming());
+      }
     }
 
     // ==========================================
@@ -356,6 +421,32 @@ service cloud.firestore {
       allow get, list: if isSignedIn() && (resource == null || isOrgAccess(resource.data));
       allow create, update: if isSignedIn() && isValidId(employeeId) && isOrgAccess(incoming()) && (resource == null || isOrgAccess(existing())) && isValidEmployee(incoming());
       allow delete: if isSignedIn() && isValidId(employeeId) && (resource == null || isOrgAccess(existing()));
+    }
+
+    match /inventoryMovements/{movementId} {
+      allow get, list: if isSignedIn() && (resource == null || isOrgMember(resource.data.organizationId));
+      allow create: if isSignedIn() && isValidId(movementId) && isOrgMember(incoming().organizationId) && isValidInventoryMovement(incoming());
+    }
+
+    match /cashRegisters/{registerId} {
+      allow get, list: if isSignedIn() && (resource == null || isOrgAccess(resource.data));
+      allow create, update: if isSignedIn() && isValidId(registerId) && isOrgAccess(incoming()) && (resource == null || isOrgAccess(existing()));
+      allow delete: if isSignedIn() && isValidId(registerId) && (resource == null || isOrgAccess(existing()));
+    }
+    match /cashSessions/{sessionId} {
+      allow get, list: if isSignedIn() && (resource == null || isOrgAccess(resource.data));
+      allow create, update: if isSignedIn() && isValidId(sessionId) && isOrgAccess(incoming()) && (resource == null || isOrgAccess(existing()));
+      allow delete: if isSignedIn() && isValidId(sessionId) && (resource == null || isOrgAccess(existing()));
+    }
+    match /cashMovements/{movementId} {
+      allow get, list: if isSignedIn() && (resource == null || isOrgAccess(resource.data));
+      allow create, update: if isSignedIn() && isValidId(movementId) && isOrgAccess(incoming()) && (resource == null || isOrgAccess(existing()));
+      allow delete: if isSignedIn() && isValidId(movementId) && (resource == null || isOrgAccess(existing()));
+    }
+    match /cashReconciliations/{reconciliationId} {
+      allow get, list: if isSignedIn() && (resource == null || isOrgAccess(resource.data));
+      allow create, update: if isSignedIn() && isValidId(reconciliationId) && isOrgAccess(incoming()) && (resource == null || isOrgAccess(existing()));
+      allow delete: if isSignedIn() && isValidId(reconciliationId) && (resource == null || isOrgAccess(existing()));
     }
   }
 }

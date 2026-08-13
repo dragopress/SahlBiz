@@ -162,6 +162,106 @@
         "baseSalary": { "type": "number" }
       },
       "required": ["id", "orgId", "name", "role", "baseSalary"]
+    },
+    "InventoryMovement": {
+      "title": "InventoryMovement",
+      "description": "Immutable stock movement record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "organizationId": { "type": "string", "maxLength": 128 },
+        "productId": { "type": "string", "maxLength": 128 },
+        "productName": { "type": "string", "maxLength": 150 },
+        "variantId": { "type": "string", "maxLength": 128 },
+        "variantName": { "type": "string", "maxLength": 100 },
+        "type": { "type": "string", "enum": ["purchase", "sale", "return", "adjustment_in", "adjustment_out", "transfer", "opening_balance"] },
+        "quantity": { "type": "number" },
+        "unitCost": { "type": "number" },
+        "referenceType": { "type": "string", "enum": ["invoice", "purchase_order", "manual", "pos", "import"] },
+        "referenceId": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "maxLength": 30 },
+        "createdBy": { "type": "string", "maxLength": 100 },
+        "idempotencyKey": { "type": "string", "maxLength": 128 },
+        "notes": { "type": "string", "maxLength": 200 }
+      },
+      "required": ["id", "organizationId", "productId", "productName", "type", "quantity", "createdAt", "createdBy"]
+    },
+    "CashRegister": {
+      "title": "CashRegister",
+      "description": "Cash Register terminal metadata",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 100 },
+        "code": { "type": "string", "maxLength": 50 },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "currentSessionId": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["id", "orgId", "name", "code", "status"]
+    },
+    "CashSession": {
+      "title": "CashSession",
+      "description": "An active or closed cash register session with expected vs actual tallies",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 128 },
+        "registerId": { "type": "string", "maxLength": 128 },
+        "registerName": { "type": "string", "maxLength": 100 },
+        "openedAt": { "type": "string", "maxLength": 30 },
+        "closedAt": { "type": "string", "maxLength": 30 },
+        "openingFloat": { "type": "number" },
+        "totalCashSales": { "type": "number" },
+        "totalCashRefunds": { "type": "number" },
+        "totalCashIn": { "type": "number" },
+        "totalCashOut": { "type": "number" },
+        "expectedBalance": { "type": "number" },
+        "actualBalance": { "type": "number" },
+        "difference": { "type": "number" },
+        "status": { "type": "string", "enum": ["open", "closed"] },
+        "openedBy": { "type": "string", "maxLength": 100 },
+        "closedBy": { "type": "string", "maxLength": 100 },
+        "notes": { "type": "string", "maxLength": 200 }
+      },
+      "required": ["id", "orgId", "registerId", "registerName", "openedAt", "openingFloat", "expectedBalance", "status", "openedBy"]
+    },
+    "CashMovement": {
+      "title": "CashMovement",
+      "description": "Audit-logged cash adding, withdrawal, or transaction flow",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 128 },
+        "sessionId": { "type": "string", "maxLength": 128 },
+        "registerId": { "type": "string", "maxLength": 128 },
+        "type": { "type": "string", "enum": ["opening", "sale", "refund", "cash_in", "cash_out"] },
+        "amount": { "type": "number" },
+        "timestamp": { "type": "string", "maxLength": 30 },
+        "reason": { "type": "string", "maxLength": 200 },
+        "performedBy": { "type": "string", "maxLength": 100 },
+        "referenceId": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["id", "orgId", "sessionId", "registerId", "type", "amount", "timestamp", "performedBy"]
+    },
+    "CashReconciliation": {
+      "title": "CashReconciliation",
+      "description": "Tally audit sheet verifying and closing cash sessions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 128 },
+        "sessionId": { "type": "string", "maxLength": 128 },
+        "registerId": { "type": "string", "maxLength": 128 },
+        "timestamp": { "type": "string", "maxLength": 30 },
+        "expectedBalance": { "type": "number" },
+        "actualBalance": { "type": "number" },
+        "difference": { "type": "number" },
+        "status": { "type": "string", "enum": ["matched", "discrepancy"] },
+        "reconciledBy": { "type": "string", "maxLength": 100 },
+        "notes": { "type": "string", "maxLength": 200 }
+      },
+      "required": ["id", "orgId", "sessionId", "registerId", "timestamp", "expectedBalance", "actualBalance", "difference", "status", "reconciledBy"]
     }
   },
   "firestore": {
@@ -213,6 +313,26 @@
     "/organizations/{orgId}/employees/{employeeId}": {
       "schema": { "$ref": "#/entities/Employee" },
       "description": "Employee directory scoped to tenant"
+    },
+    "/organizations/{orgId}/inventoryMovements/{movementId}": {
+      "schema": { "$ref": "#/entities/InventoryMovement" },
+      "description": "Immutable inventory ledger movements scoped to tenant"
+    },
+    "/organizations/{orgId}/cashRegisters/{registerId}": {
+      "schema": { "$ref": "#/entities/CashRegister" },
+      "description": "Cash registers scoped to tenant"
+    },
+    "/organizations/{orgId}/cashSessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/CashSession" },
+      "description": "Cash register sessions scoped to tenant"
+    },
+    "/organizations/{orgId}/cashMovements/{movementId}": {
+      "schema": { "$ref": "#/entities/CashMovement" },
+      "description": "Cash movements scoped to tenant"
+    },
+    "/organizations/{orgId}/cashReconciliations/{reconcileId}": {
+      "schema": { "$ref": "#/entities/CashReconciliation" },
+      "description": "Cash reconciliations scoped to tenant"
     }
   }
 }

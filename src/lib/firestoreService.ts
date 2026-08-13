@@ -11,11 +11,17 @@ import { db, auth, handleFirestoreError, OperationType } from './firebase';
 import {
   BusinessProfile,
   Customer,
+  CreditLedgerEntry,
   Product,
   Supplier,
   BusinessDocument,
   Expense,
-  Employee
+  Employee,
+  InventoryMovement,
+  CashRegister,
+  CashSession,
+  CashMovement,
+  CashReconciliation
 } from '../types';
 
 /**
@@ -256,6 +262,8 @@ export async function fetchInitialFirestoreData(orgId: string) {
     const subExpenses = query(collection(db, 'organizations', orgId, 'expenses'));
     const subEmployees = query(collection(db, 'organizations', orgId, 'employees'));
     const subProfile = query(collection(db, 'organizations', orgId, 'businessProfiles'));
+    const subInventoryMovements = query(collection(db, 'organizations', orgId, 'inventoryMovements'));
+    const subCreditLedger = query(collection(db, 'organizations', orgId, 'creditLedger'));
 
     const safeFetch = async (q: any) => {
       try {
@@ -273,7 +281,9 @@ export async function fetchInitialFirestoreData(orgId: string) {
       snapDocs,
       snapExpenses,
       snapEmployees,
-      snapProfile
+      snapProfile,
+      snapMovements,
+      snapCreditLedger
     ] = await Promise.all([
       safeFetch(subCustomers),
       safeFetch(subProducts),
@@ -281,7 +291,9 @@ export async function fetchInitialFirestoreData(orgId: string) {
       safeFetch(subDocuments),
       safeFetch(subExpenses),
       safeFetch(subEmployees),
-      safeFetch(subProfile)
+      safeFetch(subProfile),
+      safeFetch(subInventoryMovements),
+      safeFetch(subCreditLedger)
     ]);
 
     let customers: Customer[] = (snapCustomers.docs || []).map((d: any) => d.data() as Customer);
@@ -290,6 +302,8 @@ export async function fetchInitialFirestoreData(orgId: string) {
     let documents: BusinessDocument[] = (snapDocs.docs || []).map((d: any) => d.data() as BusinessDocument);
     let expenses: Expense[] = (snapExpenses.docs || []).map((d: any) => d.data() as Expense);
     let employees: Employee[] = (snapEmployees.docs || []).map((d: any) => d.data() as Employee);
+    let inventoryMovements: InventoryMovement[] = (snapMovements.docs || []).map((d: any) => d.data() as InventoryMovement);
+    let creditLedgerEntries: CreditLedgerEntry[] = (snapCreditLedger.docs || []).map((d: any) => d.data() as CreditLedgerEntry);
     
     let businessProfile: BusinessProfile | null = null;
     if (snapProfile && !snapProfile.empty && snapProfile.docs && snapProfile.docs.length > 0) {
@@ -378,10 +392,158 @@ export async function fetchInitialFirestoreData(orgId: string) {
       documents,
       expenses,
       employees,
-      businessProfile
+      businessProfile,
+      inventoryMovements,
+      creditLedgerEntries
     };
   } catch (err) {
     console.error('Error in fetchInitialFirestoreData:', err);
     return null;
   }
 }
+
+// 8. Inventory Movements
+export async function saveInventoryMovementToFirestore(movement: InventoryMovement, orgId: string) {
+  const subPath = `organizations/${orgId}/inventoryMovements/${movement.id}`;
+  try {
+    await setDoc(doc(db, 'organizations', orgId, 'inventoryMovements', movement.id), {
+      ...movement,
+      organizationId: orgId
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, subPath);
+  }
+}
+
+export async function fetchInventoryMovementsFromFirestore(orgId: string): Promise<InventoryMovement[]> {
+  const subPath = `organizations/${orgId}/inventoryMovements`;
+  try {
+    const q = query(collection(db, 'organizations', orgId, 'inventoryMovements'));
+    const snap = await getDocs(q);
+    return (snap.docs || []).map((d: any) => d.data() as InventoryMovement);
+  } catch (err) {
+    console.warn('Firestore fetch inventoryMovements warning:', err);
+    return [];
+  }
+}
+
+// 9. Cash Registers
+export async function saveCashRegisterToFirestore(register: CashRegister, orgId: string) {
+  const subPath = `organizations/${orgId}/cashRegisters/${register.id}`;
+  try {
+    await setDoc(doc(db, 'organizations', orgId, 'cashRegisters', register.id), {
+      ...register,
+      orgId
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, subPath);
+  }
+}
+
+export async function fetchCashRegistersFromFirestore(orgId: string): Promise<CashRegister[]> {
+  try {
+    const q = query(collection(db, 'organizations', orgId, 'cashRegisters'));
+    const snap = await getDocs(q);
+    return (snap.docs || []).map((d: any) => d.data() as CashRegister);
+  } catch (err) {
+    console.warn('Firestore fetch cashRegisters warning:', err);
+    return [];
+  }
+}
+
+// 10. Cash Sessions
+export async function saveCashSessionToFirestore(session: CashSession, orgId: string) {
+  const subPath = `organizations/${orgId}/cashSessions/${session.id}`;
+  try {
+    await setDoc(doc(db, 'organizations', orgId, 'cashSessions', session.id), {
+      ...session,
+      orgId
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, subPath);
+  }
+}
+
+export async function fetchCashSessionsFromFirestore(orgId: string): Promise<CashSession[]> {
+  try {
+    const q = query(collection(db, 'organizations', orgId, 'cashSessions'));
+    const snap = await getDocs(q);
+    return (snap.docs || []).map((d: any) => d.data() as CashSession);
+  } catch (err) {
+    console.warn('Firestore fetch cashSessions warning:', err);
+    return [];
+  }
+}
+
+// 11. Cash Movements
+export async function saveCashMovementToFirestore(movement: CashMovement, orgId: string) {
+  const subPath = `organizations/${orgId}/cashMovements/${movement.id}`;
+  try {
+    await setDoc(doc(db, 'organizations', orgId, 'cashMovements', movement.id), {
+      ...movement,
+      orgId
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, subPath);
+  }
+}
+
+export async function fetchCashMovementsFromFirestore(orgId: string): Promise<CashMovement[]> {
+  try {
+    const q = query(collection(db, 'organizations', orgId, 'cashMovements'));
+    const snap = await getDocs(q);
+    return (snap.docs || []).map((d: any) => d.data() as CashMovement);
+  } catch (err) {
+    console.warn('Firestore fetch cashMovements warning:', err);
+    return [];
+  }
+}
+
+// 12. Cash Reconciliations
+export async function saveCashReconciliationToFirestore(reconciliation: CashReconciliation, orgId: string) {
+  const subPath = `organizations/${orgId}/cashReconciliations/${reconciliation.id}`;
+  try {
+    await setDoc(doc(db, 'organizations', orgId, 'cashReconciliations', reconciliation.id), {
+      ...reconciliation,
+      orgId
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, subPath);
+  }
+}
+
+export async function fetchCashReconciliationsFromFirestore(orgId: string): Promise<CashReconciliation[]> {
+  try {
+    const q = query(collection(db, 'organizations', orgId, 'cashReconciliations'));
+    const snap = await getDocs(q);
+    return (snap.docs || []).map((d: any) => d.data() as CashReconciliation);
+  } catch (err) {
+    console.warn('Firestore fetch cashReconciliations warning:', err);
+    return [];
+  }
+}
+
+// 13. Credit Ledger
+export async function saveCreditLedgerEntryToFirestore(entry: CreditLedgerEntry, orgId: string) {
+  const subPath = `organizations/${orgId}/creditLedger/${entry.id}`;
+  try {
+    await setDoc(doc(db, 'organizations', orgId, 'creditLedger', entry.id), {
+      ...entry,
+      orgId
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, subPath);
+  }
+}
+
+export async function fetchCreditLedgerEntriesFromFirestore(orgId: string): Promise<CreditLedgerEntry[]> {
+  try {
+    const q = query(collection(db, 'organizations', orgId, 'creditLedger'));
+    const snap = await getDocs(q);
+    return (snap.docs || []).map((d: any) => d.data() as CreditLedgerEntry);
+  } catch (err) {
+    console.warn('Firestore fetch creditLedger warning:', err);
+    return [];
+  }
+}
+

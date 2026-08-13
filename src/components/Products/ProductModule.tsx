@@ -18,11 +18,41 @@ import {
   ChevronRight,
   Layers,
   Sparkles,
-  CheckCircle2
+  CheckCircle2,
+  ArrowUpRight,
+  ArrowDownLeft,
+  History,
+  SlidersHorizontal,
+  Filter
 } from 'lucide-react';
 
 export const ProductModule: React.FC = () => {
-  const { products, addProduct, updateProduct, deleteProduct, isLoadingInitialData, isSaving } = useStore();
+  const { 
+    products, 
+    addProduct, 
+    updateProduct, 
+    deleteProduct, 
+    isLoadingInitialData, 
+    isSaving,
+    inventoryMovements = [],
+    addInventoryMovement
+  } = useStore();
+
+  const [activeTab, setActiveTab] = useState<'catalog' | 'movements'>('catalog');
+
+  // Stock Adjustment Modal states
+  const [isAdjustModalOpen, setIsAdjustModalOpen] = useState(false);
+  const [selectedAdjustProduct, setSelectedAdjustProduct] = useState<Product | null>(null);
+  const [selectedAdjustVariantId, setSelectedAdjustVariantId] = useState<string>('');
+  const [adjustType, setAdjustType] = useState<'adjustment_in' | 'adjustment_out' | 'return' | 'transfer'>('adjustment_in');
+  const [adjustQuantity, setAdjustQuantity] = useState<number>(1);
+  const [adjustNotes, setAdjustNotes] = useState<string>('');
+  const [adjustUnitCost, setAdjustUnitCost] = useState<string>('');
+
+  // Movements List Filters states
+  const [movementSearchTerm, setMovementSearchTerm] = useState('');
+  const [filterMovementType, setFilterMovementType] = useState<string>('all');
+  const [filterReferenceType, setFilterReferenceType] = useState<string>('all');
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -117,6 +147,24 @@ export const ProductModule: React.FC = () => {
     }
     return p.stockQty <= p.minStockAlert;
   }).length;
+
+  const filteredMovements = React.useMemo(() => {
+    return (inventoryMovements || []).filter(m => {
+      const term = movementSearchTerm.toLowerCase().trim();
+      if (term) {
+        const matchesProduct = m.productName.toLowerCase().includes(term);
+        const matchesNotes = m.notes?.toLowerCase().includes(term);
+        const matchesRef = m.referenceId?.toLowerCase().includes(term);
+        const matchesUser = m.createdBy.toLowerCase().includes(term);
+        if (!matchesProduct && !matchesNotes && !matchesRef && !matchesUser) return false;
+      }
+
+      if (filterMovementType !== 'all' && m.type !== filterMovementType) return false;
+      if (filterReferenceType !== 'all' && m.referenceType !== filterReferenceType) return false;
+
+      return true;
+    });
+  }, [inventoryMovements, movementSearchTerm, filterMovementType, filterReferenceType]);
 
   const toggleExpand = (id: string) => {
     setExpandedProductIds(prev =>
@@ -290,6 +338,60 @@ export const ProductModule: React.FC = () => {
     });
   };
 
+  const openAdjustModal = (prod: Product | null = null) => {
+    setSelectedAdjustProduct(prod);
+    if (prod) {
+      if (prod.hasVariants && prod.variants && prod.variants.length > 0) {
+        setSelectedAdjustVariantId(prod.variants[0].id);
+      } else {
+        setSelectedAdjustVariantId('');
+      }
+    } else {
+      setSelectedAdjustVariantId('');
+    }
+    setAdjustType('adjustment_in');
+    setAdjustQuantity(1);
+    setAdjustNotes('');
+    setAdjustUnitCost(prod ? prod.costPrice.toString() : '');
+    setIsAdjustModalOpen(true);
+  };
+
+  const handleSaveStockAdjustment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedAdjustProduct) return;
+
+    const parsedQty = Number(adjustQuantity);
+    if (isNaN(parsedQty) || parsedQty <= 0) {
+      alert("La quantité doit être un nombre positif.");
+      return;
+    }
+
+    const cost = adjustUnitCost ? Number(adjustUnitCost) : undefined;
+    
+    let selectedV = undefined;
+    let selectedVName = undefined;
+    if (selectedAdjustProduct.hasVariants && selectedAdjustProduct.variants) {
+      selectedV = selectedAdjustProduct.variants.find(v => v.id === selectedAdjustVariantId);
+      if (selectedV) {
+        selectedVName = Object.entries(selectedV.attributes).map(([k, val]) => `${k}: ${val}`).join(', ');
+      }
+    }
+
+    await addInventoryMovement({
+      productId: selectedAdjustProduct.id,
+      productName: selectedAdjustProduct.name,
+      variantId: selectedV?.id,
+      variantName: selectedVName,
+      type: adjustType,
+      quantity: parsedQty,
+      unitCost: cost,
+      referenceType: 'manual',
+      notes: adjustNotes || 'Ajustement manuel de stock'
+    });
+
+    setIsAdjustModalOpen(false);
+  };
+
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto text-slate-900">
       
@@ -318,6 +420,13 @@ export const ProductModule: React.FC = () => {
             <span>Recherche Code-Barres</span>
           </button>
           <button
+            onClick={() => openAdjustModal()}
+            className="flex items-center gap-2 bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 text-xs font-bold px-3.5 py-2.5 rounded transition-all shadow-2xs"
+          >
+            <SlidersHorizontal className="w-4 h-4 text-indigo-600" />
+            <span>Ajuster Stock</span>
+          </button>
+          <button
             onClick={() => openAddModal()}
             className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2.5 rounded transition-all shadow-xs"
           >
@@ -327,7 +436,40 @@ export const ProductModule: React.FC = () => {
         </div>
       </div>
 
-      {/* Low Stock Warning Banner */}
+      {/* Tab Switcher */}
+      <div className="flex border-b border-slate-200">
+        <button
+          onClick={() => setActiveTab('catalog')}
+          className={`pb-3 px-6 text-xs font-bold transition-all border-b-2 flex items-center gap-2 ${
+            activeTab === 'catalog'
+              ? 'border-indigo-600 text-indigo-600 font-extrabold'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Package className="w-4 h-4" />
+          <span>Catalogue des Stocks</span>
+        </button>
+        <button
+          onClick={() => setActiveTab('movements')}
+          className={`pb-3 px-6 text-xs font-bold transition-all border-b-2 flex items-center gap-2 ${
+            activeTab === 'movements'
+              ? 'border-indigo-600 text-indigo-600 font-extrabold'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <History className="w-4 h-4" />
+          <span>Livre des Mouvements (Immutable Ledger)</span>
+          {inventoryMovements.length > 0 && (
+            <span className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full text-[10px]">
+              {inventoryMovements.length}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {activeTab === 'catalog' && (
+        <>
+          {/* Low Stock Warning Banner */}
       {lowStockCount > 0 && (
         <div className="bg-rose-50 border border-rose-200 p-4 rounded text-rose-900 text-xs flex items-center justify-between">
           <div className="flex items-center gap-2.5 font-medium">
@@ -609,6 +751,199 @@ export const ProductModule: React.FC = () => {
           </table>
         </div>
       </div>
+        </>
+      )}
+
+      {/* Movements Ledger Tab Content */}
+      {activeTab === 'movements' && (
+        <div className="space-y-6">
+          {/* Filters Bar */}
+          <div className="flex flex-col md:flex-row items-center justify-between gap-3 bg-white p-4 rounded border border-slate-200 shadow-xs text-xs">
+            
+            {/* Search Input */}
+            <div className="relative w-full md:w-72">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              <input
+                type="text"
+                placeholder="Rechercher produit, notes, réf, auteur..."
+                value={movementSearchTerm}
+                onChange={e => setMovementSearchTerm(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded pl-9 pr-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-indigo-600"
+              />
+            </div>
+
+            {/* Select Filter Type */}
+            <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
+              <div className="flex items-center gap-1.5">
+                <Filter className="w-3.5 h-3.5 text-slate-400" />
+                <span className="text-slate-500 font-medium">Type:</span>
+              </div>
+              <select
+                value={filterMovementType}
+                onChange={e => setFilterMovementType(e.target.value)}
+                className="bg-white border border-slate-200 text-slate-700 px-2.5 py-1.5 rounded font-medium focus:outline-none focus:border-indigo-600"
+              >
+                <option value="all">Tous les types</option>
+                <option value="opening_balance">Stock Initial</option>
+                <option value="purchase">Achat / Réception</option>
+                <option value="sale">Vente</option>
+                <option value="return">Retour</option>
+                <option value="adjustment_in">Ajustement (+) </option>
+                <option value="adjustment_out">Ajustement (-)</option>
+                <option value="transfer">Transfert</option>
+              </select>
+
+              <div className="flex items-center gap-1.5 ml-2">
+                <SlidersHorizontal className="w-3.5 h-3.5 text-slate-400" />
+                <span className="text-slate-500 font-medium">Réf:</span>
+              </div>
+              <select
+                value={filterReferenceType}
+                onChange={e => setFilterReferenceType(e.target.value)}
+                className="bg-white border border-slate-200 text-slate-700 px-2.5 py-1.5 rounded font-medium focus:outline-none focus:border-indigo-600"
+              >
+                <option value="all">Toutes les sources</option>
+                <option value="manual">Manuel</option>
+                <option value="pos">Vente POS</option>
+                <option value="invoice">Facture</option>
+                <option value="purchase_order">Bon d'achat</option>
+                <option value="import">Import</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Movements List Table */}
+          <div className="bg-white border border-slate-200 rounded overflow-hidden shadow-xs">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 text-xs font-bold">
+                    <th className="py-3 px-4">Date & Heure</th>
+                    <th className="py-3 px-4">Produit / Variante</th>
+                    <th className="py-3 px-4">Type de mouvement</th>
+                    <th className="py-3 px-4 text-center">Quantité</th>
+                    <th className="py-3 px-4 text-right">Coût Unitaire</th>
+                    <th className="py-3 px-4">Réf. / Source</th>
+                    <th className="py-3 px-4">Responsable</th>
+                    <th className="py-3 px-4">Notes / Description</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-150">
+                  {filteredMovements.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-12 text-center text-slate-400 text-xs">
+                        Aucun mouvement de stock enregistré avec ces critères.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredMovements.map(m => {
+                      const dateObj = new Date(m.createdAt);
+                      const formattedDate = isNaN(dateObj.getTime())
+                        ? m.createdAt
+                        : dateObj.toLocaleDateString('fr-FR', {
+                            day: '2-digit',
+                            month: '2-digit',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          });
+
+                      let typeBadge = '';
+                      let qtySign = '';
+                      let isPositive = false;
+
+                      switch (m.type) {
+                        case 'opening_balance':
+                          typeBadge = 'bg-blue-100 text-blue-800 border-blue-200';
+                          qtySign = '+';
+                          isPositive = true;
+                          break;
+                        case 'purchase':
+                        case 'adjustment_in':
+                          typeBadge = 'bg-emerald-100 text-emerald-800 border-emerald-200';
+                          qtySign = '+';
+                          isPositive = true;
+                          break;
+                        case 'sale':
+                        case 'adjustment_out':
+                          typeBadge = 'bg-rose-100 text-rose-800 border-rose-200';
+                          qtySign = '-';
+                          isPositive = false;
+                          break;
+                        case 'return':
+                          typeBadge = 'bg-indigo-100 text-indigo-800 border-indigo-200';
+                          qtySign = '+';
+                          isPositive = true;
+                          break;
+                        case 'transfer':
+                          typeBadge = 'bg-amber-100 text-amber-800 border-amber-200';
+                          qtySign = '-';
+                          isPositive = false;
+                          break;
+                      }
+
+                      const typeLabels: Record<string, string> = {
+                        opening_balance: 'Stock Initial',
+                        purchase: 'Achat / Réception',
+                        sale: 'Vente POS',
+                        return: 'Retour',
+                        adjustment_in: 'Ajustement (+)',
+                        adjustment_out: 'Ajustement (-)',
+                        transfer: 'Transfert',
+                      };
+
+                      return (
+                        <tr key={m.id} className="hover:bg-slate-50 transition-colors text-xs">
+                          <td className="py-3 px-4 font-mono text-slate-500 whitespace-nowrap">
+                            {formattedDate}
+                          </td>
+                          <td className="py-3 px-4 font-bold text-slate-900">
+                            <div>
+                              <span>{m.productName}</span>
+                              {m.variantName && (
+                                <div className="text-[10px] text-indigo-600 font-medium mt-0.5">
+                                  {m.variantName}
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <span className={`px-2 py-0.5 border rounded text-[10px] font-extrabold ${typeBadge}`}>
+                              {typeLabels[m.type] || m.type}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-center font-mono font-black">
+                            <span className={isPositive ? 'text-emerald-700' : 'text-rose-700'}>
+                              {qtySign}{m.quantity}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono text-slate-600">
+                            {m.unitCost !== undefined ? formatMad(m.unitCost) : '-'}
+                          </td>
+                          <td className="py-3 px-4 font-mono font-bold text-indigo-700 whitespace-nowrap">
+                            <span className="capitalize">{m.referenceType || 'manuel'}</span>
+                            {m.referenceId && (
+                              <span className="text-[10px] text-slate-400 font-normal ml-1">
+                                ({m.referenceId.slice(-6)})
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-slate-500 truncate max-w-[120px]" title={m.createdBy}>
+                            {m.createdBy.split('@')[0]}
+                          </td>
+                          <td className="py-3 px-4 text-slate-600 italic truncate max-w-[180px]" title={m.notes}>
+                            {m.notes || '-'}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add / Edit Product Modal with Variants Builder */}
       {isAddModalOpen && (
@@ -987,6 +1322,211 @@ export const ProductModule: React.FC = () => {
 
             </form>
 
+          </div>
+        </div>
+      )}
+
+      {/* Manual Stock Adjustment Modal */}
+      {isAdjustModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-md shadow-2xl text-slate-900 overflow-hidden flex flex-col">
+            
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-4 border-b border-slate-200 bg-slate-50">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-600 flex items-center justify-center font-bold">
+                  <SlidersHorizontal className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-slate-900">Ajustement Manuel du Stock</h3>
+                  <p className="text-[11px] text-slate-500">Enregistrez un mouvement d'inventaire immutable</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsAdjustModalOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-900 hover:bg-slate-200 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Form */}
+            <form onSubmit={handleSaveStockAdjustment} className="p-4 space-y-4 text-xs">
+              
+              {/* Product Selection */}
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">Sélectionner un Produit *</label>
+                <select
+                  required
+                  value={selectedAdjustProduct?.id || ''}
+                  onChange={e => {
+                    const found = products.find(p => p.id === e.target.value);
+                    setSelectedAdjustProduct(found || null);
+                    if (found && found.hasVariants && found.variants && found.variants.length > 0) {
+                      setSelectedAdjustVariantId(found.variants[0].id);
+                      setAdjustUnitCost(found.variants[0].costPrice ? found.variants[0].costPrice.toString() : found.costPrice.toString());
+                    } else if (found) {
+                      setSelectedAdjustVariantId('');
+                      setAdjustUnitCost(found.costPrice.toString());
+                    } else {
+                      setSelectedAdjustVariantId('');
+                      setAdjustUnitCost('');
+                    }
+                  }}
+                  className="w-full bg-slate-50 border border-slate-200 rounded px-3 py-2 text-xs focus:outline-none focus:border-indigo-600"
+                >
+                  <option value="" disabled>-- Sélectionner un produit --</option>
+                  {products.map(p => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.hasVariants ? 'Multi-variantes' : `Stock: ${p.stockQty}`})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Variant Selection (Conditional) */}
+              {selectedAdjustProduct && selectedAdjustProduct.hasVariants && selectedAdjustProduct.variants && (
+                <div>
+                  <label className="block text-slate-700 font-bold mb-1">Déclinaison / Variante *</label>
+                  <select
+                    required
+                    value={selectedAdjustVariantId}
+                    onChange={e => {
+                      setSelectedAdjustVariantId(e.target.value);
+                      const selectedV = selectedAdjustProduct.variants?.find(v => v.id === e.target.value);
+                      if (selectedV) {
+                        setAdjustUnitCost(selectedV.costPrice ? selectedV.costPrice.toString() : selectedAdjustProduct.costPrice.toString());
+                      }
+                    }}
+                    className="w-full bg-slate-50 border border-slate-200 rounded px-3 py-2 text-xs focus:outline-none focus:border-indigo-600"
+                  >
+                    {selectedAdjustProduct.variants.map(v => {
+                      const attrStr = Object.entries(v.attributes).map(([k, val]) => `${k}: ${val}`).join(', ');
+                      return (
+                        <option key={v.id} value={v.id}>
+                          {attrStr} (Stock actuel: {v.stockQty})
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              )}
+
+              {/* Adjustment Type / Opération */}
+              <div>
+                <label className="block text-slate-700 font-bold mb-1.5">Type de Mouvement / Motif</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAdjustType('adjustment_in')}
+                    className={`py-2 px-3 border rounded text-center transition-all ${
+                      adjustType === 'adjustment_in'
+                        ? 'bg-emerald-50 border-emerald-500 text-emerald-800 font-bold'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="font-bold">Entrée (+)</div>
+                    <div className="text-[10px] opacity-75">Réassort, surplus</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setAdjustType('adjustment_out')}
+                    className={`py-2 px-3 border rounded text-center transition-all ${
+                      adjustType === 'adjustment_out'
+                        ? 'bg-rose-50 border-rose-500 text-rose-800 font-bold'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="font-bold">Sortie (-)</div>
+                    <div className="text-[10px] opacity-75">Perte, casse, vol</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setAdjustType('return')}
+                    className={`py-2 px-3 border rounded text-center transition-all ${
+                      adjustType === 'return'
+                        ? 'bg-indigo-50 border-indigo-500 text-indigo-800 font-bold'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="font-bold">Retour (+)</div>
+                    <div className="text-[10px] opacity-75">Retour client</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setAdjustType('transfer')}
+                    className={`py-2 px-3 border rounded text-center transition-all ${
+                      adjustType === 'transfer'
+                        ? 'bg-amber-50 border-amber-500 text-amber-800 font-bold'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="font-bold">Transfert (-)</div>
+                    <div className="text-[10px] opacity-75">Vers autre magasin</div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Quantity and Cost Row */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 font-bold mb-1">Quantité *</label>
+                  <input
+                    type="number"
+                    required
+                    min="1"
+                    value={adjustQuantity}
+                    onChange={e => setAdjustQuantity(Math.max(1, parseInt(e.target.value) || 0))}
+                    className="w-full bg-slate-50 border border-slate-200 rounded px-3 py-2 text-xs text-slate-900 font-mono focus:outline-none focus:border-indigo-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-700 font-bold mb-1">Coût unitaire (Optionnel)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="MAD"
+                    value={adjustUnitCost}
+                    onChange={e => setAdjustUnitCost(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded px-3 py-2 text-xs text-slate-900 font-mono focus:outline-none focus:border-indigo-600"
+                  />
+                </div>
+              </div>
+
+              {/* Notes / Commentaires */}
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">Notes / Raison de l'ajustement</label>
+                <textarea
+                  rows={2}
+                  placeholder="Ex: Inventaire de fin d'année, article endommagé..."
+                  value={adjustNotes}
+                  onChange={e => setAdjustNotes(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-indigo-600"
+                />
+              </div>
+
+              {/* Action Buttons */}
+              <div className="pt-2 flex justify-end gap-2 border-t border-slate-150">
+                <button
+                  type="button"
+                  onClick={() => setIsAdjustModalOpen(false)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded shadow-xs"
+                >
+                  Enregistrer l'ajustement
+                </button>
+              </div>
+
+            </form>
           </div>
         </div>
       )}

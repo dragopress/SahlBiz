@@ -19,6 +19,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     admin: "Control Plane Propriétaire",
     aiAssistant: "Assistant IA L'Mawoun",
     audit: "Registre d'Audit",
+    cashRegister: "Registre de Caisse",
 
     // Actions
     add: "Ajouter",
@@ -91,6 +92,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     pricing: "L'A3sar w l'Formules",
     settings: "L'Réglage dial SahlBiz",
     aiAssistant: "L'Mawoun (Assistant IA)",
+    cashRegister: "L'Registre dial l'Caisse",
 
     // Actions
     add: "Zid (Ajouter)",
@@ -164,6 +166,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     settings: "إعدادات النظام",
     aiAssistant: "المعون (الذكاء الاصطناعي)",
     audit: "دفتر التدقيق المالي",
+    cashRegister: "سجل الصندوق المالي",
 
     // Actions
     add: "إضافة",
@@ -236,6 +239,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     settings: "SahlBiz Settings",
     aiAssistant: "L'Mawoun AI Assistant",
     audit: "Audit Ledger",
+    cashRegister: "Cash Register",
 
     add: "Add New",
     edit: "Edit",
