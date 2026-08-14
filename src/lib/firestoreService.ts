@@ -21,7 +21,14 @@ import {
   CashRegister,
   CashSession,
   CashMovement,
-  CashReconciliation
+  CashReconciliation,
+  Account,
+  Journal,
+  JournalEntry,
+  FiscalPeriod,
+  TaxEntry,
+  AccountingPayment,
+  Reconciliation
 } from '../types';
 
 /**
@@ -546,4 +553,173 @@ export async function fetchCreditLedgerEntriesFromFirestore(orgId: string): Prom
     return [];
   }
 }
+
+// 14. Double-Entry Accounting: Accounts (Plan Comptable)
+export async function saveAccountToFirestore(account: Account, orgId: string) {
+  const subPath = `organizations/${orgId}/accounts/${account.id}`;
+  try {
+    await setDoc(doc(db, 'organizations', orgId, 'accounts', account.id), {
+      ...account,
+      orgId
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, subPath);
+  }
+}
+
+export async function fetchAccountsFromFirestore(orgId: string): Promise<Account[]> {
+  try {
+    const q = query(collection(db, 'organizations', orgId, 'accounts'));
+    const snap = await getDocs(q);
+    return (snap.docs || []).map((d: any) => d.data() as Account);
+  } catch (err) {
+    console.warn('Firestore fetch accounts warning:', err);
+    return [];
+  }
+}
+
+// 15. Accounting Journals
+export async function saveJournalToFirestore(journal: Journal, orgId: string) {
+  const subPath = `organizations/${orgId}/journals/${journal.id}`;
+  try {
+    await setDoc(doc(db, 'organizations', orgId, 'journals', journal.id), {
+      ...journal,
+      orgId
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, subPath);
+  }
+}
+
+export async function fetchJournalsFromFirestore(orgId: string): Promise<Journal[]> {
+  try {
+    const q = query(collection(db, 'organizations', orgId, 'journals'));
+    const snap = await getDocs(q);
+    return (snap.docs || []).map((d: any) => d.data() as Journal);
+  } catch (err) {
+    console.warn('Firestore fetch journals warning:', err);
+    return [];
+  }
+}
+
+// 16. Journal Entries (Écritures Comptables)
+export async function saveJournalEntryToFirestore(entry: JournalEntry, orgId: string) {
+  const subPath = `organizations/${orgId}/journalEntries/${entry.id}`;
+  try {
+    await setDoc(doc(db, 'organizations', orgId, 'journalEntries', entry.id), {
+      ...entry,
+      orgId
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, subPath);
+  }
+}
+
+export async function fetchJournalEntriesFromFirestore(orgId: string): Promise<JournalEntry[]> {
+  try {
+    const q = query(collection(db, 'organizations', orgId, 'journalEntries'));
+    const snap = await getDocs(q);
+    return (snap.docs || []).map((d: any) => d.data() as JournalEntry);
+  } catch (err) {
+    console.warn('Firestore fetch journalEntries warning:', err);
+    return [];
+  }
+}
+
+// 17. Fiscal Periods (Exercices & Périodes)
+export async function saveFiscalPeriodToFirestore(period: FiscalPeriod, orgId: string) {
+  const subPath = `organizations/${orgId}/fiscalPeriods/${period.id}`;
+  try {
+    await setDoc(doc(db, 'organizations', orgId, 'fiscalPeriods', period.id), {
+      ...period,
+      orgId
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, subPath);
+  }
+}
+
+export async function fetchFiscalPeriodsFromFirestore(orgId: string): Promise<FiscalPeriod[]> {
+  try {
+    const q = query(collection(db, 'organizations', orgId, 'fiscalPeriods'));
+    const snap = await getDocs(q);
+    return (snap.docs || []).map((d: any) => d.data() as FiscalPeriod);
+  } catch (err) {
+    console.warn('Firestore fetch fiscalPeriods warning:', err);
+    return [];
+  }
+}
+
+// 18. Tax Entries (TVA Déclarations)
+export async function saveTaxEntryToFirestore(taxEntry: TaxEntry, orgId: string) {
+  const subPath = `organizations/${orgId}/taxEntries/${taxEntry.id}`;
+  try {
+    await setDoc(doc(db, 'organizations', orgId, 'taxEntries', taxEntry.id), {
+      ...taxEntry,
+      orgId
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, subPath);
+  }
+}
+
+export async function fetchTaxEntriesFromFirestore(orgId: string): Promise<TaxEntry[]> {
+  try {
+    const q = query(collection(db, 'organizations', orgId, 'taxEntries'));
+    const snap = await getDocs(q);
+    return (snap.docs || []).map((d: any) => d.data() as TaxEntry);
+  } catch (err) {
+    console.warn('Firestore fetch taxEntries warning:', err);
+    return [];
+  }
+}
+
+// 19. Accounting Payments
+export async function saveAccountingPaymentToFirestore(payment: AccountingPayment, orgId: string) {
+  const subPath = `organizations/${orgId}/accountingPayments/${payment.id}`;
+  try {
+    await setDoc(doc(db, 'organizations', orgId, 'accountingPayments', payment.id), {
+      ...payment,
+      orgId
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, subPath);
+  }
+}
+
+export async function fetchAccountingPaymentsFromFirestore(orgId: string): Promise<AccountingPayment[]> {
+  try {
+    const q = query(collection(db, 'organizations', orgId, 'accountingPayments'));
+    const snap = await getDocs(q);
+    return (snap.docs || []).map((d: any) => d.data() as AccountingPayment);
+  } catch (err) {
+    console.warn('Firestore fetch accountingPayments warning:', err);
+    return [];
+  }
+}
+
+// 20. Reconciliations (Rapprochement)
+export async function saveReconciliationToFirestore(rec: Reconciliation, orgId: string) {
+  const subPath = `organizations/${orgId}/reconciliations/${rec.id}`;
+  try {
+    await setDoc(doc(db, 'organizations', orgId, 'reconciliations', rec.id), {
+      ...rec,
+      orgId
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, subPath);
+  }
+}
+
+export async function fetchReconciliationsFromFirestore(orgId: string): Promise<Reconciliation[]> {
+  try {
+    const q = query(collection(db, 'organizations', orgId, 'reconciliations'));
+    const snap = await getDocs(q);
+    return (snap.docs || []).map((d: any) => d.data() as Reconciliation);
+  } catch (err) {
+    console.warn('Firestore fetch reconciliations warning:', err);
+    return [];
+  }
+}
+
 

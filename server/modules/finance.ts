@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Expense, JournalEntry, AuditLog } from "../types";
 import { validateRequest } from "../middleware/validation";
 import { requireIdempotency } from "../middleware/idempotency";
+import { RecurringExpenseScheduler, RecurringFrequency } from "./recurringScheduler";
 
 export const financeRouter = express.Router();
 
@@ -203,3 +204,101 @@ financeRouter.get("/audit", validateRequest({}), async (req: any, res) => {
   const logs = await FinanceService.getAuditLogs(req.user.orgId);
   return res.json({ success: true, data: logs });
 });
+
+// --- Recurring Expense Backend Scheduler Endpoints ---
+
+const recurringTemplateSchema = z.object({
+  title: z.string().min(1, "Title is required").max(150),
+  category: z.enum(["loyer", "salaires", "matieres", "transport", "electricite", "impots", "entretiens", "divers"]),
+  amountHt: z.number().positive("Amount HT must be positive"),
+  tvaRate: z.number().nonnegative("TVA rate cannot be negative"),
+  vendorName: z.string().min(1, "Vendor name is required"),
+  vendorIce: z.string().max(30).optional(),
+  paymentMethod: z.enum(["cash", "check", "traite", "cmi_card", "transfer", "kreddy"]),
+  frequency: z.enum(["daily", "weekly", "monthly", "quarterly", "yearly"]).optional().default("monthly"),
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Format must be YYYY-MM-DD").optional(),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Format must be YYYY-MM-DD").optional(),
+  maxOccurrences: z.number().positive().optional(),
+  notes: z.string().optional(),
+  timezone: z.string().optional()
+});
+
+const updateRecurringStatusSchema = z.object({
+  status: z.enum(["active", "paused", "completed", "cancelled"])
+});
+
+const triggerSchedulerRunSchema = z.object({
+  overrideCurrentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()
+});
+
+financeRouter.get("/recurring/templates", validateRequest({}), async (req: any, res) => {
+  const templates = await RecurringExpenseScheduler.getTemplates(req.user.orgId);
+  return res.json({ success: true, data: templates });
+});
+
+financeRouter.post("/recurring/templates", requireIdempotency(), validateRequest({
+  body: recurringTemplateSchema
+}), async (req: any, res) => {
+  const template = await RecurringExpenseScheduler.registerTemplate(req.user.orgId, req.body);
+  
+  await FinanceService.logAuditAction(
+    req.user.orgId,
+    req.user.uid,
+    req.user.email,
+    "CREATE_RECURRING_SCHEDULE",
+    `Created recurring schedule '${template.title}' (${template.frequency}) of ${template.amountTtc} MAD`
+  );
+
+  return res.status(201).json({ success: true, data: template });
+});
+
+financeRouter.patch("/recurring/templates/:id/status", validateRequest({
+  body: updateRecurringStatusSchema
+}), async (req: any, res) => {
+  const template = await RecurringExpenseScheduler.updateTemplateStatus(
+    req.user.orgId,
+    req.params.id,
+    req.body.status
+  );
+  if (!template) {
+    return res.status(404).json({ success: false, error: "Recurring schedule template not found" });
+  }
+
+  await FinanceService.logAuditAction(
+    req.user.orgId,
+    req.user.uid,
+    req.user.email,
+    "UPDATE_RECURRING_SCHEDULE_STATUS",
+    `Updated recurring schedule '${template.title}' status to ${req.body.status}`
+  );
+
+  return res.json({ success: true, data: template });
+});
+
+financeRouter.post("/recurring/run", validateRequest({
+  body: triggerSchedulerRunSchema
+}), async (req: any, res) => {
+  const result = await RecurringExpenseScheduler.processDueRecurringExpenses({
+    orgIdFilter: req.user.orgId,
+    overrideCurrentDate: req.body?.overrideCurrentDate
+  });
+
+  // Log summary to financial audit trail if expenses were generated
+  if (result.expensesGenerated > 0) {
+    await FinanceService.logAuditAction(
+      req.user.orgId,
+      req.user.uid,
+      req.user.email,
+      "RECURRING_EXPENSES_GENERATED",
+      `Scheduler generated ${result.expensesGenerated} recurring expense(s) for business date ${result.currentBusinessDate}`
+    );
+  }
+
+  return res.json({ success: true, data: result });
+});
+
+financeRouter.get("/recurring/audit-logs", validateRequest({}), async (req: any, res) => {
+  const logs = await RecurringExpenseScheduler.getAuditLogs(req.user.orgId);
+  return res.json({ success: true, data: logs });
+});
+

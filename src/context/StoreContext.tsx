@@ -26,7 +26,15 @@ import {
   DocumentItem,
   DocPaymentAllocation,
   InvoiceAuditEntry,
-  CreditLedgerEntry
+  CreditLedgerEntry,
+  Account,
+  Journal,
+  JournalEntry,
+  JournalLine,
+  FiscalPeriod,
+  TaxEntry,
+  AccountingPayment,
+  Reconciliation
 } from '../types';
 import {
   saveProfileToFirestore,
@@ -50,8 +58,33 @@ import {
   fetchCashMovementsFromFirestore,
   fetchCashReconciliationsFromFirestore,
   saveCreditLedgerEntryToFirestore,
-  fetchCreditLedgerEntriesFromFirestore
+  fetchCreditLedgerEntriesFromFirestore,
+  saveAccountToFirestore,
+  fetchAccountsFromFirestore,
+  saveJournalToFirestore,
+  fetchJournalsFromFirestore,
+  saveJournalEntryToFirestore,
+  fetchJournalEntriesFromFirestore,
+  saveFiscalPeriodToFirestore,
+  fetchFiscalPeriodsFromFirestore,
+  saveTaxEntryToFirestore,
+  fetchTaxEntriesFromFirestore,
+  saveAccountingPaymentToFirestore,
+  fetchAccountingPaymentsFromFirestore,
+  saveReconciliationToFirestore,
+  fetchReconciliationsFromFirestore
 } from '../lib/firestoreService';
+import {
+  STANDARD_PCGM_ACCOUNTS,
+  STANDARD_PCGM_JOURNALS,
+  validateJournalEntryBalance,
+  generateSaleJournalEntry,
+  generatePurchaseJournalEntry,
+  generateExpenseJournalEntry,
+  generateCustomerPaymentJournalEntry,
+  generatePayrollJournalEntry,
+  generateFiscalPeriodsForYear
+} from '../domain/accountingEngine';
 import {
   logBusinessEvent,
   fetchBusinessEvents,
@@ -197,6 +230,22 @@ interface StoreContextType {
   isSaving: boolean;
   setIsSaving: (saving: boolean) => void;
 
+  // Double-Entry Accounting (PCGM Maroc) state & actions
+  accounts: Account[];
+  journals: Journal[];
+  journalEntries: JournalEntry[];
+  fiscalPeriods: FiscalPeriod[];
+  taxEntries: TaxEntry[];
+  accountingPayments: AccountingPayment[];
+  reconciliations: Reconciliation[];
+  addJournalEntry: (entryData: Omit<JournalEntry, 'id' | 'entryNumber' | 'totalDebit' | 'totalCredit' | 'isBalanced'> & { lines: JournalLine[] }) => Promise<JournalEntry>;
+  createAccount: (accountData: Omit<Account, 'id' | 'orgId'>) => Promise<Account>;
+  updateAccount: (account: Account) => Promise<void>;
+  createJournal: (journalData: Omit<Journal, 'id' | 'orgId'>) => Promise<Journal>;
+  recordAccountingPayment: (paymentData: Omit<AccountingPayment, 'id' | 'paymentNumber' | 'orgId'>) => Promise<AccountingPayment>;
+  createReconciliation: (recData: Omit<Reconciliation, 'id' | 'reconciliationNumber' | 'orgId'>) => Promise<Reconciliation>;
+  closeFiscalPeriod: (periodId: string) => Promise<void>;
+
   // Business events audit ledger
   businessEvents: BusinessEvent[];
   setBusinessEvents: React.Dispatch<React.SetStateAction<BusinessEvent[]>>;
@@ -272,6 +321,66 @@ function generateInitialCreditLedgerEntries(customersList: Customer[], organizat
   return entries;
 }
 
+function generateInitialAccounts(organizationId: string): Account[] {
+  return STANDARD_PCGM_ACCOUNTS.map(acc => ({
+    ...acc,
+    id: `acc-${organizationId}-${acc.code}`,
+    orgId: organizationId
+  }));
+}
+
+function generateInitialJournals(organizationId: string): Journal[] {
+  return STANDARD_PCGM_JOURNALS.map(j => ({
+    ...j,
+    id: `jnl-${organizationId}-${j.code}`,
+    orgId: organizationId
+  }));
+}
+
+function generateInitialFiscalPeriods(organizationId: string): FiscalPeriod[] {
+  return generateFiscalPeriodsForYear(2026, organizationId);
+}
+
+function generateInitialJournalEntries(docs: BusinessDocument[], exps: Expense[], organizationId: string): JournalEntry[] {
+  const entries: JournalEntry[] = [];
+  
+  docs.filter(d => d.type === 'facture').forEach(doc => {
+    try {
+      const entry = generateSaleJournalEntry({
+        docNumber: doc.number,
+        docId: doc.id,
+        date: doc.date,
+        subtotalHt: doc.subtotalHt,
+        totalTva: doc.totalTva,
+        totalTtc: doc.totalTtc,
+        paymentMethod: doc.paymentMethod,
+        droitDeTimbre: doc.droitDeTimbre,
+        customerName: doc.customerName,
+        orgId: organizationId,
+        postedBy: 'System'
+      });
+      entries.push(entry);
+    } catch (e) {
+      console.warn('Could not generate initial sale entry for doc', doc.number, e);
+    }
+  });
+
+  exps.forEach(exp => {
+    try {
+      const entry = generateExpenseJournalEntry({
+        expense: exp,
+        orgId: organizationId,
+        postedBy: 'System'
+      });
+      entries.push(entry);
+    } catch (e) {
+      console.warn('Could not generate initial expense entry for exp', exp.title, e);
+    }
+  });
+
+  return entries;
+}
+
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
 
 const STORAGE_KEY = 'sahlbiz_store_v1';
@@ -300,6 +409,15 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
   const [cashReconciliations, setCashReconciliations] = useState<CashReconciliation[]>([]);
   const [creditLedgerEntries, setCreditLedgerEntries] = useState<CreditLedgerEntry[]>([]);
+
+  // Double-Entry Accounting State (PCGM Maroc)
+  const [accounts, setAccounts] = useState<Account[]>(() => generateInitialAccounts(orgId));
+  const [journals, setJournals] = useState<Journal[]>(() => generateInitialJournals(orgId));
+  const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
+  const [fiscalPeriods, setFiscalPeriods] = useState<FiscalPeriod[]>(() => generateInitialFiscalPeriods(orgId));
+  const [taxEntries, setTaxEntries] = useState<TaxEntry[]>([]);
+  const [accountingPayments, setAccountingPayments] = useState<AccountingPayment[]>([]);
+  const [reconciliations, setReconciliations] = useState<Reconciliation[]>([]);
 
   const [selectedDocumentForView, setSelectedDocumentForView] = useState<BusinessDocument | null>(null);
   const [whatsAppModalData, setWhatsAppModalData] = useState<{ isOpen: boolean; phone: string; name: string; text: string } | null>(null);
@@ -405,6 +523,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (parsed.cashSessions) setCashSessions(parsed.cashSessions);
         if (parsed.cashMovements) setCashMovements(parsed.cashMovements);
         if (parsed.cashReconciliations) setCashReconciliations(parsed.cashReconciliations);
+        if (parsed.accounts && parsed.accounts.length > 0) setAccounts(parsed.accounts);
+        if (parsed.journals && parsed.journals.length > 0) setJournals(parsed.journals);
+        if (parsed.journalEntries && parsed.journalEntries.length > 0) setJournalEntries(parsed.journalEntries);
+        if (parsed.fiscalPeriods && parsed.fiscalPeriods.length > 0) setFiscalPeriods(parsed.fiscalPeriods);
+        if (parsed.taxEntries) setTaxEntries(parsed.taxEntries);
+        if (parsed.accountingPayments) setAccountingPayments(parsed.accountingPayments);
+        if (parsed.reconciliations) setReconciliations(parsed.reconciliations);
       }
     } catch (e) {
       console.error('Failed to load local storage state:', e);
@@ -419,8 +544,15 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         fetchCashRegistersFromFirestore(orgId),
         fetchCashSessionsFromFirestore(orgId),
         fetchCashMovementsFromFirestore(orgId),
-        fetchCashReconciliationsFromFirestore(orgId)
-      ]).then(([remoteData, events, registers, sessions, movements, reconciliations]) => {
+        fetchCashReconciliationsFromFirestore(orgId),
+        fetchAccountsFromFirestore(orgId),
+        fetchJournalsFromFirestore(orgId),
+        fetchJournalEntriesFromFirestore(orgId),
+        fetchFiscalPeriodsFromFirestore(orgId),
+        fetchTaxEntriesFromFirestore(orgId),
+        fetchAccountingPaymentsFromFirestore(orgId),
+        fetchReconciliationsFromFirestore(orgId)
+      ]).then(([remoteData, events, registers, sessions, movements, reconciliations, remoteAccounts, remoteJournals, remoteJournalEntries, remotePeriods, remoteTax, remotePayments, remoteReconciliations]) => {
         if (remoteData) {
           if (remoteData.businessProfile) setProfile(remoteData.businessProfile);
           if (remoteData.customers && remoteData.customers.length > 0) setCustomers(remoteData.customers);
@@ -490,6 +622,43 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
         if (movements) setCashMovements(movements);
         if (reconciliations) setCashReconciliations(reconciliations);
+
+        // Handle Accounting remote loading & seeding
+        if (remoteAccounts && remoteAccounts.length > 0) {
+          setAccounts(remoteAccounts);
+        } else {
+          const initialAccs = generateInitialAccounts(orgId);
+          setAccounts(initialAccs);
+          initialAccs.forEach(acc => saveAccountToFirestore(acc, orgId).catch(console.error));
+        }
+
+        if (remoteJournals && remoteJournals.length > 0) {
+          setJournals(remoteJournals);
+        } else {
+          const initialJnls = generateInitialJournals(orgId);
+          setJournals(initialJnls);
+          initialJnls.forEach(j => saveJournalToFirestore(j, orgId).catch(console.error));
+        }
+
+        if (remotePeriods && remotePeriods.length > 0) {
+          setFiscalPeriods(remotePeriods);
+        } else {
+          const initialPeriods = generateInitialFiscalPeriods(orgId);
+          setFiscalPeriods(initialPeriods);
+          initialPeriods.forEach(p => saveFiscalPeriodToFirestore(p, orgId).catch(console.error));
+        }
+
+        if (remoteJournalEntries && remoteJournalEntries.length > 0) {
+          setJournalEntries(remoteJournalEntries);
+        } else {
+          const seededEntries = generateInitialJournalEntries(remoteData?.documents || documents, remoteData?.expenses || expenses, orgId);
+          setJournalEntries(seededEntries);
+          seededEntries.forEach(entry => saveJournalEntryToFirestore(entry, orgId).catch(console.error));
+        }
+
+        if (remoteTax) setTaxEntries(remoteTax);
+        if (remotePayments) setAccountingPayments(remotePayments);
+        if (remoteReconciliations) setReconciliations(remoteReconciliations);
       })
       .catch(err => console.warn('Firestore initial sync note:', err))
       .finally(() => {
@@ -511,6 +680,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           code: 'CAISSE-01',
           status: 'active'
         }]);
+      }
+      if (journalEntries.length === 0) {
+        setJournalEntries(generateInitialJournalEntries(documents, expenses, orgId));
       }
     }
   }, [currentUser, orgId]);
@@ -546,12 +718,19 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         cashMovements,
         cashReconciliations,
         creditLedgerEntries,
+        accounts,
+        journals,
+        journalEntries,
+        fiscalPeriods,
+        taxEntries,
+        accountingPayments,
+        reconciliations,
       };
       localStorage.setItem(`${STORAGE_KEY}_${orgId}`, JSON.stringify(stateToSave));
     } catch (e) {
       console.error('Failed to save state to localStorage:', e);
     }
-  }, [orgId, profile, customers, products, suppliers, documents, expenses, employees, attendance, payslips, cashSession, inventoryMovements, cashRegisters, cashSessions, cashMovements, cashReconciliations, creditLedgerEntries]);
+  }, [orgId, profile, customers, products, suppliers, documents, expenses, employees, attendance, payslips, cashSession, inventoryMovements, cashRegisters, cashSessions, cashMovements, cashReconciliations, creditLedgerEntries, accounts, journals, journalEntries, fiscalPeriods, taxEntries, accountingPayments, reconciliations]);
 
   const updateProfile = async (newProfile: BusinessProfile) => {
     setIsSaving(true);
@@ -955,6 +1134,27 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           amountTtc: newDoc.totalTtc,
           customerName: newDoc.customerName
         });
+
+        // Double-Entry Accounting: Auto-post balanced entry to Sales Journal (VE)
+        try {
+          const saleEntry = generateSaleJournalEntry({
+            docNumber: newDoc.number,
+            docId: newDoc.id,
+            date: newDoc.date,
+            subtotalHt: newDoc.subtotalHt,
+            totalTva: newDoc.totalTva,
+            totalTtc: newDoc.totalTtc,
+            paymentMethod: newDoc.paymentMethod,
+            droitDeTimbre: newDoc.droitDeTimbre,
+            customerName: newDoc.customerName,
+            orgId,
+            postedBy: currentUser?.email || 'System'
+          });
+          setJournalEntries(prev => [saleEntry, ...prev]);
+          saveJournalEntryToFirestore(saleEntry, orgId).catch(console.error);
+        } catch (jeErr) {
+          console.error('Failed auto-posting sales journal entry:', jeErr);
+        }
       }
 
       // If invoice is unpaid/partial and set to Kreddy, update client balance
@@ -1019,8 +1219,34 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         fiscalYear: new Date().getFullYear()
       };
 
-      setDocuments(prev => [newInvoice, ...prev]);
+      setDocuments(prev => [
+        newInvoice,
+        ...prev.map(d => d.id === devis.id ? { ...d, status: 'accepted' as const } : d)
+      ]);
+
       await saveDocumentToFirestore(newInvoice, orgId);
+      await saveDocumentToFirestore({ ...devis, status: 'accepted' as const }, orgId);
+
+      // Auto-post converted invoice to Sales Journal (VE)
+      try {
+        const saleEntry = generateSaleJournalEntry({
+          docNumber: newInvoice.number,
+          docId: newInvoice.id,
+          date: newInvoice.date,
+          subtotalHt: newInvoice.subtotalHt,
+          totalTva: newInvoice.totalTva,
+          totalTtc: newInvoice.totalTtc,
+          paymentMethod: newInvoice.paymentMethod,
+          droitDeTimbre: newInvoice.droitDeTimbre,
+          customerName: newInvoice.customerName,
+          orgId,
+          postedBy: currentUser?.email || 'System'
+        });
+        setJournalEntries(prev => [saleEntry, ...prev]);
+        saveJournalEntryToFirestore(saleEntry, orgId).catch(console.error);
+      } catch (jeErr) {
+        console.error('Failed auto-posting sales entry for converted devis:', jeErr);
+      }
 
       await triggerAuditLog('INVOICE_CREATED', {
         documentId: newInvoice.id,
@@ -1418,6 +1644,19 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         amountTtc: newExp.amountTtc,
         category: newExp.category
       });
+
+      // Double-Entry Accounting: Auto-post balanced expense entry
+      try {
+        const je = generateExpenseJournalEntry({
+          expense: newExp,
+          orgId,
+          postedBy: currentUser?.email || 'System'
+        });
+        setJournalEntries(prev => [je, ...prev]);
+        saveJournalEntryToFirestore(je, orgId).catch(console.error);
+      } catch (jeErr) {
+        console.error('Failed auto-posting expense journal entry:', jeErr);
+      }
     } catch (e) {
       console.error(e);
     } finally {
@@ -1448,64 +1687,6 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setIsSaving(false);
     }
   };
-
-  // Autogenerate recurring expenses that are due
-  useEffect(() => {
-    if (expenses.length === 0) return;
-
-    const todayStr = new Date().toISOString().split('T')[0];
-    let hasChanges = false;
-    let currentExpenses = [...expenses];
-
-    // Find active recurring expenses that have hit their next occurrence date
-    const activeRecurring = currentExpenses.filter(
-      e => e.isRecurring && e.nextOccurrenceDate && e.nextOccurrenceDate <= todayStr && e.recurringStatus !== 'cancelled'
-    );
-
-    if (activeRecurring.length > 0) {
-      activeRecurring.forEach(oldExp => {
-        const nextOccDate = oldExp.nextOccurrenceDate!;
-        
-        // Add exactly 1 month
-        const d = new Date(nextOccDate);
-        d.setMonth(d.getMonth() + 1);
-        const futureOccDate = d.toISOString().split('T')[0];
-
-        // Create the new expense
-        const newExpId = `exp-rec-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-        const newExp: Expense = {
-          ...oldExp,
-          id: newExpId,
-          date: nextOccDate,
-          isRecurring: true,
-          nextOccurrenceDate: futureOccDate,
-          recurringStatus: 'active',
-          notes: oldExp.notes ? `${oldExp.notes} (Générée automatiquement)` : 'Générée automatiquement',
-        };
-
-        // Deactivate recurrence on the older occurrence to maintain a single active chain head
-        const updatedOldExp: Expense = {
-          ...oldExp,
-          isRecurring: false,
-          recurringStatus: 'completed'
-        };
-
-        currentExpenses = currentExpenses.map(item => 
-          item.id === oldExp.id ? updatedOldExp : item
-        );
-        currentExpenses.unshift(newExp);
-
-        saveExpenseToFirestore(newExp, orgId);
-        saveExpenseToFirestore(updatedOldExp, orgId);
-        
-        hasChanges = true;
-      });
-
-      if (hasChanges) {
-        setExpenses(currentExpenses);
-      }
-    }
-  }, [expenses, orgId]);
 
   const addEmployee = (empData: Omit<Employee, 'id'>) => {
     const newEmp: Employee = {
@@ -1577,6 +1758,30 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       netPayable: newPayslip.netPayable,
       month: newPayslip.month
     }).catch(console.error);
+
+    // Double-Entry Accounting: Auto-post payroll entry to OD Journal
+    try {
+      const payrollEntry = generatePayrollJournalEntry({
+        payslipId: newPayslip.id,
+        employeeId: emp.id,
+        employeeName: emp.fullName,
+        month: newPayslip.month,
+        date: newPayslip.paymentDate,
+        baseSalary: newPayslip.baseSalary,
+        cnssEmployee: newPayslip.cnssEmployeeShare,
+        amoEmployee: newPayslip.amoEmployeeShare,
+        igrAmount: 0,
+        netSalary: newPayslip.netPayable,
+        cnssEmployer: newPayslip.cnssEmployerShare,
+        amoEmployer: Number((newPayslip.baseSalary * 0.0411).toFixed(2)),
+        orgId,
+        postedBy: currentUser?.email || 'System'
+      });
+      setJournalEntries(prev => [payrollEntry, ...prev]);
+      saveJournalEntryToFirestore(payrollEntry, orgId).catch(console.error);
+    } catch (jeErr) {
+      console.error('Failed auto-posting payroll journal entry:', jeErr);
+    }
   };
 
   const processPosSale = (
@@ -1775,6 +1980,27 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       amountTtc: finalAmount,
       paymentMethod: method
     }).catch(console.error);
+
+    // Double-Entry Accounting: Auto-post POS sale to Sales Journal (VE)
+    try {
+      const posEntry = generateSaleJournalEntry({
+        docNumber: newDoc.number,
+        docId: newDoc.id,
+        date: newDoc.date,
+        subtotalHt: newDoc.subtotalHt,
+        totalTva: newDoc.totalTva,
+        totalTtc: newDoc.totalTtc,
+        paymentMethod: method,
+        droitDeTimbre: newDoc.droitDeTimbre,
+        customerName: cust?.name || 'Client Comptoir POS',
+        orgId,
+        postedBy: currentUser?.email || 'POS Cashier'
+      });
+      setJournalEntries(prev => [posEntry, ...prev]);
+      saveJournalEntryToFirestore(posEntry, orgId).catch(console.error);
+    } catch (jeErr) {
+      console.error('Failed auto-posting POS sale journal entry:', jeErr);
+    }
 
     cart.forEach(item => {
       triggerAuditLog('STOCK_SOLD', {
@@ -2160,6 +2386,140 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
   }, [products, inventoryMovements]);
 
+  const addJournalEntry = async (entryData: Omit<JournalEntry, 'id' | 'entryNumber' | 'totalDebit' | 'totalCredit' | 'isBalanced'> & { lines: JournalLine[] }): Promise<JournalEntry> => {
+    const balance = validateJournalEntryBalance(entryData.lines);
+    if (!balance.isBalanced) {
+      throw new Error(balance.errorMessage || "L'écriture comptable n'est pas équilibrée (Débit !== Crédit).");
+    }
+
+    const d = entryData.date ? new Date(entryData.date) : new Date();
+    const year = isNaN(d.getTime()) ? 2026 : d.getFullYear();
+    const count = journalEntries.filter(e => {
+      const eDate = e.date ? new Date(e.date) : new Date();
+      return e.journalCode === entryData.journalCode && (isNaN(eDate.getTime()) ? 2026 : eDate.getFullYear()) === year;
+    }).length;
+    const seq = String(count + 1).padStart(4, '0');
+    const entryNumber = `${entryData.journalCode}-${year}-${seq}`;
+
+    const newEntry: JournalEntry = {
+      ...entryData,
+      id: `je-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      entryNumber,
+      orgId,
+      totalDebit: balance.totalDebit,
+      totalCredit: balance.totalCredit,
+      isBalanced: true,
+      status: entryData.status || 'posted',
+      postedAt: new Date().toISOString(),
+      postedBy: currentUser?.email || 'System'
+    };
+
+    setJournalEntries(prev => [newEntry, ...prev]);
+    await saveJournalEntryToFirestore(newEntry, orgId);
+
+    await triggerAuditLog('ACCOUNTING_ENTRY_POSTED', {
+      entryNumber: newEntry.entryNumber,
+      journalCode: newEntry.journalCode,
+      totalDebit: newEntry.totalDebit,
+      totalCredit: newEntry.totalCredit,
+      description: newEntry.description
+    });
+
+    return newEntry;
+  };
+
+  const createAccount = async (accountData: Omit<Account, 'id' | 'orgId'>): Promise<Account> => {
+    const newAccount: Account = {
+      ...accountData,
+      id: `acc-${orgId}-${accountData.code}`,
+      orgId
+    };
+    setAccounts(prev => {
+      const exists = prev.some(a => a.code === accountData.code);
+      if (exists) return prev.map(a => a.code === accountData.code ? newAccount : a);
+      return [...prev, newAccount];
+    });
+    await saveAccountToFirestore(newAccount, orgId);
+    return newAccount;
+  };
+
+  const updateAccount = async (account: Account): Promise<void> => {
+    setAccounts(prev => prev.map(a => a.id === account.id || a.code === account.code ? account : a));
+    await saveAccountToFirestore(account, orgId);
+  };
+
+  const createJournal = async (journalData: Omit<Journal, 'id' | 'orgId'>): Promise<Journal> => {
+    const newJournal: Journal = {
+      ...journalData,
+      id: `jnl-${orgId}-${journalData.code}`,
+      orgId
+    };
+    setJournals(prev => [...prev, newJournal]);
+    await saveJournalToFirestore(newJournal, orgId);
+    return newJournal;
+  };
+
+  const recordAccountingPayment = async (paymentData: Omit<AccountingPayment, 'id' | 'paymentNumber' | 'orgId'>): Promise<AccountingPayment> => {
+    const year = new Date(paymentData.paymentDate).getFullYear() || 2026;
+    const count = accountingPayments.length;
+    const paymentNumber = `PAY-${year}-${String(count + 1).padStart(4, '0')}`;
+
+    const newPayment: AccountingPayment = {
+      ...paymentData,
+      id: `pay-acc-${Date.now()}`,
+      paymentNumber,
+      orgId
+    };
+
+    setAccountingPayments(prev => [newPayment, ...prev]);
+    await saveAccountingPaymentToFirestore(newPayment, orgId);
+
+    if (paymentData.partnerType === 'customer') {
+      try {
+        const entry = generateCustomerPaymentJournalEntry({
+          paymentId: newPayment.id,
+          paymentNumber: newPayment.paymentNumber,
+          date: newPayment.paymentDate,
+          amount: newPayment.amount,
+          paymentMethod: newPayment.paymentMethod,
+          customerName: paymentData.partnerId,
+          reference: newPayment.reference,
+          orgId,
+          postedBy: currentUser?.email || 'System'
+        });
+        setJournalEntries(prev => [entry, ...prev]);
+        saveJournalEntryToFirestore(entry, orgId).catch(console.error);
+      } catch (e) {
+        console.error('Failed generating customer payment journal entry:', e);
+      }
+    }
+
+    return newPayment;
+  };
+
+  const createReconciliation = async (recData: Omit<Reconciliation, 'id' | 'reconciliationNumber' | 'orgId'>): Promise<Reconciliation> => {
+    const count = reconciliations.length;
+    const reconciliationNumber = `LET-${String(count + 1).padStart(4, '0')}`;
+    const newRec: Reconciliation = {
+      ...recData,
+      id: `rec-${Date.now()}`,
+      reconciliationNumber,
+      orgId
+    };
+    setReconciliations(prev => [newRec, ...prev]);
+    await saveReconciliationToFirestore(newRec, orgId);
+    return newRec;
+  };
+
+  const closeFiscalPeriod = async (periodId: string): Promise<void> => {
+    const nowStr = new Date().toISOString();
+    setFiscalPeriods(prev => prev.map(p => p.id === periodId ? { ...p, status: 'closed', lockedAt: nowStr } : p));
+    const period = fiscalPeriods.find(p => p.id === periodId);
+    if (period) {
+      await saveFiscalPeriodToFirestore({ ...period, status: 'closed', lockedAt: nowStr }, orgId);
+    }
+  };
+
   return (
     <StoreContext.Provider
       value={{
@@ -2219,6 +2579,21 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         cashMovements,
         addCashMovement,
         cashReconciliations,
+        // Double-Entry Accounting state & actions
+        accounts,
+        journals,
+        journalEntries,
+        fiscalPeriods,
+        taxEntries,
+        accountingPayments,
+        reconciliations,
+        addJournalEntry,
+        createAccount,
+        updateAccount,
+        createJournal,
+        recordAccountingPayment,
+        createReconciliation,
+        closeFiscalPeriod,
         selectedDocumentForView,
         setSelectedDocumentForView,
         whatsAppModalData,

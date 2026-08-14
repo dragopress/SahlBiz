@@ -37,8 +37,10 @@ service cloud.firestore {
     // Checks membership: creator, fallback, subcollection membership, or user document mapping
     function isOrgMember(orgId) {
       return isSignedIn() && (
+        isAdmin() ||
         orgId == request.auth.uid ||
-        (('org_' + request.auth.uid).startsWith(orgId) && orgId.size() >= 12) ||
+        orgId == ('org_' + request.auth.uid) ||
+        ('org_' + request.auth.uid).matches('^' + orgId + '.*') ||
         exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
          orgId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.orgId)
@@ -46,11 +48,12 @@ service cloud.firestore {
     }
 
     function getUserRole(orgId) {
-      return exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)) ?
-        get(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.get('role', 'owner') :
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) ?
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'owner') :
-          'owner');
+      return isAdmin() ? 'admin' :
+        (exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)) ?
+          get(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.get('role', 'owner') :
+          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) ?
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'owner') :
+            'owner'));
     }
 
     function isOwnerOrAdmin(orgId) {
@@ -213,6 +216,37 @@ service cloud.firestore {
              cle.orgId is string && cle.orgId.size() <= 128;
     }
 
+    function isValidAccount(acc) {
+      return acc.id is string && acc.id.size() <= 128 &&
+             acc.code is string && acc.code.size() <= 20 &&
+             acc.name is string && acc.name.size() <= 200 &&
+             acc.accountClass is number &&
+             acc.type is string &&
+             acc.orgId is string && acc.orgId.size() <= 128;
+    }
+
+    function isValidJournalEntry(entry) {
+      return entry.id is string && entry.id.size() <= 128 &&
+             entry.entryNumber is string && entry.entryNumber.size() <= 60 &&
+             entry.journalCode is string && entry.journalCode.size() <= 10 &&
+             entry.date is string && entry.date.size() <= 40 &&
+             entry.description is string && entry.description.size() <= 255 &&
+             entry.totalDebit is number && entry.totalDebit >= 0 &&
+             entry.totalCredit is number && entry.totalCredit >= 0 &&
+             entry.isBalanced is bool && entry.isBalanced == true &&
+             entry.status is string &&
+             entry.orgId is string && entry.orgId.size() <= 128;
+    }
+
+    function isValidFiscalPeriod(fp) {
+      return fp.id is string && fp.id.size() <= 128 &&
+             fp.name is string && fp.name.size() <= 100 &&
+             fp.startDate is string && fp.startDate.size() <= 40 &&
+             fp.endDate is string && fp.endDate.size() <= 40 &&
+             fp.status is string &&
+             fp.orgId is string && fp.orgId.size() <= 128;
+    }
+
     // ==========================================
     // 3. SECURE ACCESS CONTROL PATH RULES
     // ==========================================
@@ -343,7 +377,8 @@ service cloud.firestore {
       match /inventoryMovements/{movementId} {
         allow get: if isValidId(orgId) && isValidId(movementId) && isOrgMember(orgId) && hasPermission(orgId, 'product.read');
         allow list: if isValidId(orgId) && isOrgMember(orgId) && hasPermission(orgId, 'product.read') && (resource == null || resource.data.organizationId == orgId);
-        allow create: if isValidId(orgId) && isValidId(movementId) && hasPermission(orgId, 'product.update') && incoming().organizationId == orgId && isValidInventoryMovement(incoming());
+        allow create, update: if isValidId(orgId) && isValidId(movementId) && hasPermission(orgId, 'product.update') && incoming().organizationId == orgId && isValidInventoryMovement(incoming());
+        allow delete: if isValidId(orgId) && isValidId(movementId) && hasPermission(orgId, 'product.delete');
       }
 
       // Cash register, session, movement and reconciliation systems
@@ -370,6 +405,60 @@ service cloud.firestore {
       match /creditLedger/{entryId} {
         allow get, list: if isValidId(orgId) && isOrgMember(orgId) && hasPermission(orgId, 'customer.read');
         allow create: if isValidId(orgId) && isValidId(entryId) && hasPermission(orgId, 'customer.create') && incoming().orgId == orgId && isValidCreditLedgerEntry(incoming());
+      }
+
+      // ========================================================
+      // 5. DOUBLE-ENTRY ACCOUNTING & FISCAL ENGINE (PCGM)
+      // ========================================================
+
+      // Chart of Accounts (Plan Comptable)
+      match /accounts/{accountId} {
+        allow get, list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create, update: if isValidId(orgId) && isValidId(accountId) && isOrgMember(orgId) && incoming().orgId == orgId && isValidAccount(incoming());
+        allow delete: if isValidId(orgId) && isValidId(accountId) && isOwnerOrAdmin(orgId);
+      }
+
+      // Accounting Journals (VE, AC, BQ, CA, OD, AN)
+      match /journals/{journalId} {
+        allow get, list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create, update: if isValidId(orgId) && isValidId(journalId) && isOrgMember(orgId) && incoming().orgId == orgId;
+        allow delete: if isValidId(orgId) && isValidId(journalId) && isOwnerOrAdmin(orgId);
+      }
+
+      // Journal Entries (Double-Entry Invariant Guarded)
+      match /journalEntries/{entryId} {
+        allow get, list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create: if isValidId(orgId) && isValidId(entryId) && isOrgMember(orgId) && incoming().orgId == orgId && isValidJournalEntry(incoming());
+        allow update: if isValidId(orgId) && isValidId(entryId) && isOrgMember(orgId) && incoming().orgId == orgId && isValidJournalEntry(incoming());
+        allow delete: if isValidId(orgId) && isValidId(entryId) && isOwnerOrAdmin(orgId);
+      }
+
+      // Fiscal Periods & Closing
+      match /fiscalPeriods/{periodId} {
+        allow get, list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create, update: if isValidId(orgId) && isValidId(periodId) && isOrgMember(orgId) && incoming().orgId == orgId && isValidFiscalPeriod(incoming());
+        allow delete: if isValidId(orgId) && isValidId(periodId) && isOwnerOrAdmin(orgId);
+      }
+
+      // Tax Entries & VAT Declarations
+      match /taxEntries/{taxEntryId} {
+        allow get, list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create, update: if isValidId(orgId) && isValidId(taxEntryId) && isOrgMember(orgId) && incoming().orgId == orgId;
+        allow delete: if isValidId(orgId) && isValidId(taxEntryId) && isOwnerOrAdmin(orgId);
+      }
+
+      // Accounting Payments & Settlements
+      match /accountingPayments/{paymentId} {
+        allow get, list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create, update: if isValidId(orgId) && isValidId(paymentId) && isOrgMember(orgId) && incoming().orgId == orgId;
+        allow delete: if isValidId(orgId) && isValidId(paymentId) && isOwnerOrAdmin(orgId);
+      }
+
+      // Bank & Cash Reconciliations (Rapprochement bancaire)
+      match /reconciliations/{reconciliationId} {
+        allow get, list: if isValidId(orgId) && isOrgMember(orgId);
+        allow create, update: if isValidId(orgId) && isValidId(reconciliationId) && isOrgMember(orgId) && incoming().orgId == orgId;
+        allow delete: if isValidId(orgId) && isValidId(reconciliationId) && isOwnerOrAdmin(orgId);
       }
     }
 

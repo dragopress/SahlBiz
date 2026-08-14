@@ -222,9 +222,11 @@ export interface Expense {
   
   // Recurring features
   isRecurring?: boolean;
-  recurringInterval?: 'monthly';
+  recurringInterval?: 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'yearly';
   nextOccurrenceDate?: string; // YYYY-MM-DD
-  recurringStatus?: 'active' | 'completed' | 'cancelled';
+  recurringStatus?: 'active' | 'paused' | 'completed' | 'cancelled';
+  generatedByScheduler?: boolean;
+  generationIdempotencyKey?: string;
 }
 
 export interface Employee {
@@ -395,7 +397,8 @@ export type BusinessEventType =
   | 'CUSTOMER_CREDIT_CREATED'
   | 'CUSTOMER_PAYMENT_RECEIVED'
   | 'EMPLOYEE_CREATED'
-  | 'PAYSLIP_CREATED';
+  | 'PAYSLIP_CREATED'
+  | 'ACCOUNTING_ENTRY_POSTED';
 
 export interface BusinessEvent {
   id: string;
@@ -426,5 +429,178 @@ export interface InventoryMovement {
   idempotencyKey?: string;
   notes?: string;
 }
+
+// ----------------------------------------------------
+// DOUBLE-ENTRY ACCOUNTING FOUNDATION (PCGM - MAROC)
+// ----------------------------------------------------
+
+export type AccountType = 'asset' | 'liability' | 'equity' | 'revenue' | 'expense';
+export type AccountClass = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+
+export enum PCGMClass {
+  FINANCEMENT_PERMANENT = 1,
+  ACTIF_IMMOBILISE = 2,
+  ACTIF_CIRCULANT = 3,
+  PASSIF_CIRCULANT = 4,
+  COMPTES_DE_TRESORERIE = 5,
+  COMPTES_DE_CHARGES = 6,
+  COMPTES_DE_PRODUITS = 7,
+}
+
+export interface Account {
+  id: string;
+  code: string; // e.g. "34210000", "71110000"
+  name: string;
+  nameAr?: string;
+  type: AccountType;
+  accountClass: AccountClass;
+  class?: AccountClass;
+  category?: string;
+  normalBalance?: 'debit' | 'credit';
+  isReconcilable?: boolean;
+  parentCode?: string;
+  currency: 'MAD';
+  isSystem: boolean;
+  isActive: boolean;
+  orgId: string;
+  description?: string;
+}
+
+export interface ChartOfAccounts {
+  id: string;
+  orgId: string;
+  name: string;
+  accounts: Account[];
+}
+
+export type JournalCode = 'VE' | 'AC' | 'BQ' | 'CA' | 'OD' | 'AN';
+
+export interface Journal {
+  id: string;
+  code: JournalCode;
+  name: string;
+  nameAr?: string;
+  type: 'sales' | 'purchases' | 'bank' | 'cash' | 'general' | 'opening';
+  defaultAccountId?: string;
+  orgId: string;
+}
+
+export interface JournalLine {
+  id: string;
+  accountId?: string;
+  accountCode: string;
+  accountName: string;
+  debit: number;
+  credit: number;
+  description?: string;
+  partnerId?: string;
+  partnerType?: 'customer' | 'supplier' | 'employee' | 'other';
+  partnerName?: string;
+  taxEntryId?: string;
+  reconciliationId?: string;
+  isReconciled?: boolean;
+}
+
+export interface JournalEntry {
+  id: string;
+  entryNumber: string; // e.g. "VE-2026-00001"
+  journalId?: string;
+  journalCode: JournalCode | string;
+  fiscalPeriodId?: string; // e.g. "2026-08"
+  date: string; // YYYY-MM-DD
+  referenceType?:
+    | 'sale_invoice'
+    | 'pos_sale'
+    | 'purchase_invoice'
+    | 'purchase_order'
+    | 'expense'
+    | 'payment_customer'
+    | 'payment_supplier'
+    | 'cash_movement'
+    | 'kreddy_adjustment'
+    | 'payroll'
+    | 'opening_balance'
+    | 'credit_note'
+    | 'debit_note'
+    | 'manual';
+  referenceId?: string;
+  referenceNumber?: string;
+  reference?: string;
+  description: string;
+  lines: JournalLine[];
+  totalDebit: number;
+  totalCredit: number;
+  status: 'draft' | 'posted' | 'locked' | 'void';
+  isBalanced: boolean;
+  postedAt?: string;
+  postedBy?: string;
+  orgId: string;
+}
+
+export interface FiscalPeriod {
+  id: string;
+  year: number;
+  month: number;
+  code: string; // "2026-08"
+  name: string; // "Août 2026"
+  startDate: string;
+  endDate: string;
+  status: 'open' | 'closed' | 'locked';
+  closedAt?: string;
+  closedBy?: string;
+  orgId: string;
+}
+
+export interface TaxEntry {
+  id: string;
+  journalEntryId: string;
+  journalLineId: string;
+  taxType: 'tva_collected' | 'tva_deductible_charge' | 'tva_deductible_immob' | 'stamp_duty';
+  taxRate: number;
+  baseAmount: number;
+  taxAmount: number;
+  date: string;
+  partnerIce?: string;
+  partnerName?: string;
+  invoiceNumber?: string;
+  paymentMethod?: string;
+  orgId: string;
+}
+
+export interface AccountingPayment {
+  id: string;
+  paymentNumber: string;
+  paymentType: 'inbound' | 'outbound';
+  partnerId: string;
+  partnerType: 'customer' | 'supplier';
+  partnerName: string;
+  amount: number;
+  paymentMethod: PaymentMethod;
+  referenceDocType?: 'facture' | 'expense' | 'purchase' | 'kreddy' | 'manual';
+  referenceDocId?: string;
+  reference?: string;
+  paymentDate: string;
+  journalEntryId?: string;
+  status: 'completed' | 'reconciled' | 'cancelled';
+  notes?: string;
+  orgId: string;
+}
+
+export interface Reconciliation {
+  id: string;
+  reconciliationNumber: string;
+  accountId: string;
+  accountCode: string;
+  partnerId?: string;
+  matchedLineIds: string[];
+  totalDebitMatched: number;
+  totalCreditMatched: number;
+  difference: number;
+  status: 'reconciled' | 'partial';
+  date: string;
+  reconciledBy: string;
+  orgId: string;
+}
+
 
 

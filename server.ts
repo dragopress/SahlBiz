@@ -13,6 +13,7 @@ import { billingRouter } from "./server/modules/billing";
 import { financeRouter } from "./server/modules/finance";
 import { hrRouter } from "./server/modules/hr";
 import { aiRouter } from "./server/modules/ai";
+import { RecurringExpenseScheduler } from "./server/modules/recurringScheduler";
 import { sendStandardError, globalErrorHandler, SahlBizErrorCode } from "./server/utils/errors";
 import { requireIdempotency } from "./server/middleware/idempotency";
 
@@ -199,6 +200,8 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[SahlBiz Server] Running on http://0.0.0.0:${PORT}`);
+    // Start trusted backend recurring expense background daemon
+    RecurringExpenseScheduler.startBackgroundWorker();
   });
 }
 

@@ -1,5 +1,76 @@
-import { BusinessDocument, Expense, BusinessProfile } from '../types';
+import { BusinessDocument, Expense, BusinessProfile, JournalEntry, Account } from '../types';
 import { PCGM_ACCOUNTS, formatMad } from './moroccanTax';
+
+export function generateJournalEntriesCsv(
+  entries: JournalEntry[],
+  accounts: Account[],
+  profileName: string,
+  softwareFormat: 'sage' | 'divalto' | 'ciel' | 'standard' = 'standard'
+): string {
+  const accountMap = new Map<string, string>();
+  accounts.forEach(a => accountMap.set(a.code, a.name));
+
+  if (softwareFormat === 'sage') {
+    // Sage PNM format: Journal;Date;N_Piece;N_Compte;Libelle_Compte;Libelle_Ecriture;Debit;Credit
+    const headers = ["Journal", "Date", "N_Piece", "N_Compte", "Libelle_Compte", "Libelle_Ecriture", "Debit", "Credit"];
+    const rows: string[][] = [headers];
+
+    entries.forEach(entry => {
+      entry.lines.forEach(line => {
+        const d = entry.date.replace(/-/g, ''); // YYYYMMDD
+        rows.push([
+          entry.journalCode,
+          d,
+          entry.entryNumber,
+          line.accountCode,
+          accountMap.get(line.accountCode) || line.accountCode,
+          line.description || entry.description,
+          line.debit > 0 ? line.debit.toFixed(2) : '0.00',
+          line.credit > 0 ? line.credit.toFixed(2) : '0.00'
+        ]);
+      });
+    });
+
+    return rows.map(r => r.map(cell => `"${cell.replace(/"/g, '""')}"`).join(";")).join("\n");
+  }
+
+  // Standard PCGM CSV
+  const headers = [
+    "Date",
+    "Journal",
+    "N_Ecriture",
+    "N_Piece_Ref",
+    "N_Compte_PCGM",
+    "Intitule_Compte",
+    "Libelle_Ecriture",
+    "Nom_Tiers",
+    "Debit_MAD",
+    "Credit_MAD",
+    "Statut"
+  ];
+
+  const rows: string[][] = [headers];
+
+  entries.forEach(entry => {
+    entry.lines.forEach(line => {
+      rows.push([
+        entry.date,
+        entry.journalCode,
+        entry.entryNumber,
+        entry.reference || entry.entryNumber,
+        line.accountCode,
+        accountMap.get(line.accountCode) || line.accountCode,
+        line.description || entry.description,
+        line.partnerName || "",
+        line.debit > 0 ? line.debit.toFixed(2) : '0.00',
+        line.credit > 0 ? line.credit.toFixed(2) : '0.00',
+        entry.status
+      ]);
+    });
+  });
+
+  return rows.map(r => r.map(cell => `"${cell.replace(/"/g, '""')}"`).join(",")).join("\n");
+}
 
 export function generatePcgmJournalCsv(
   documents: BusinessDocument[],
@@ -136,3 +207,15 @@ export function exportPcgmCsv(documents: BusinessDocument[], expenses: Expense[]
   const content = generatePcgmJournalCsv(documents, expenses, profileName);
   downloadCsvFile(content, `Journal_Comptable_PCGM_${profileName.replace(/\s+/g, '_')}_2026.csv`);
 }
+
+export function exportJournalEntriesCsvFile(
+  entries: JournalEntry[],
+  accounts: Account[],
+  profileName: string,
+  softwareFormat: 'sage' | 'divalto' | 'ciel' | 'standard' = 'standard'
+) {
+  const content = generateJournalEntriesCsv(entries, accounts, profileName, softwareFormat);
+  const ext = softwareFormat === 'sage' ? 'pnm' : 'csv';
+  downloadCsvFile(content, `Ecritures_Comptables_${softwareFormat.toUpperCase()}_${profileName.replace(/\s+/g, '_')}_2026.${ext}`);
+}
+

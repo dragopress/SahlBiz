@@ -14,7 +14,9 @@ import { describe, it, beforeAll, afterAll, beforeEach } from 'vitest';
  * administrative gates, and RBAC operations.
  */
 
-describe('SahlBiz Firestore Security Rules', () => {
+const isEmulatorRunning = !!process.env.FIRESTORE_EMULATOR_HOST;
+
+describe.skipIf(!isEmulatorRunning)('SahlBiz Firestore Security Rules', () => {
   let testEnv: RulesTestEnvironment;
   const PROJECT_ID = 'ai-studio-sahlbiz-test';
 
@@ -30,11 +32,15 @@ describe('SahlBiz Firestore Security Rules', () => {
   });
 
   afterAll(async () => {
-    await testEnv.cleanup();
+    if (testEnv) {
+      await testEnv.cleanup();
+    }
   });
 
   beforeEach(async () => {
-    await testEnv.clearFirestore();
+    if (testEnv) {
+      await testEnv.clearFirestore();
+    }
   });
 
   // ==========================================

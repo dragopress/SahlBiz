@@ -1,31 +1,44 @@
 import { TvaRate, PaymentMethod } from '../types';
+import {
+  TaxEngine,
+  TaxCalculationParams,
+  TaxCalculationResult,
+  TaxDocumentItemInput,
+  TaxDocumentTotalsResult,
+  MoroccanFiscalLawRuleSet,
+  MOROCCAN_FISCAL_RULES
+} from '../domain/taxEngine';
+
+// Re-export TaxEngine and all types from domain module
+export {
+  TaxEngine,
+  MOROCCAN_FISCAL_RULES
+};
+export type {
+  TaxCalculationParams,
+  TaxCalculationResult,
+  TaxDocumentItemInput,
+  TaxDocumentTotalsResult,
+  MoroccanFiscalLawRuleSet
+};
 
 export function validateIce(iceString: string): { valid: boolean; message?: string } {
-  const cleaned = iceString.trim().replace(/\s+/g, '');
-  if (!cleaned) {
-    return { valid: false, message: "L'ICE est obligatoire pour les factures B2B au Maroc." };
-  }
-  if (!/^\d{15}$/.test(cleaned)) {
-    return { valid: false, message: "L'ICE doit comporter exactement 15 chiffres." };
-  }
-  return { valid: true };
+  return TaxEngine.validateIce(iceString);
 }
 
 export function calculateTva(amountHt: number, rate: TvaRate): { tvaAmount: number; amountTtc: number } {
-  if (rate === 0) {
-    return { tvaAmount: 0, amountTtc: amountHt };
-  }
-  const tvaAmount = Number((amountHt * (rate / 100)).toFixed(2));
-  const amountTtc = Number((amountHt + tvaAmount).toFixed(2));
-  return { tvaAmount, amountTtc };
+  const res = TaxEngine.calculate({
+    taxDate: new Date(),
+    transactionType: 'sale_b2b',
+    amount: amountHt,
+    customRate: rate,
+    isTaxInclusive: false
+  });
+  return { tvaAmount: res.tvaAmount, amountTtc: res.rawTtc };
 }
 
 export function calculateDroitDeTimbre(amountTtc: number, paymentMethod?: PaymentMethod): number {
-  // Moroccan Tax Code: 0.25% Droit de Timbre applies on cash payments
-  if (paymentMethod === 'cash') {
-    return Number((amountTtc * 0.0025).toFixed(2));
-  }
-  return 0;
+  return TaxEngine.calculateDroitDeTimbre(amountTtc, paymentMethod);
 }
 
 export interface CashThresholdResult {
@@ -41,7 +54,7 @@ export function detectCashLegalThreshold(amountTtc: number, paymentMethod?: Paym
   const isCash = paymentMethod === 'cash';
   const thresholdLimit = 10000;
   const isOverThreshold = isCash && amountTtc > thresholdLimit;
-  const droitDeTimbre = isCash ? Number((amountTtc * 0.0025).toFixed(2)) : 0;
+  const droitDeTimbre = TaxEngine.calculateDroitDeTimbre(amountTtc, paymentMethod);
   const amountTtcWithStampDuty = Number((amountTtc + droitDeTimbre).toFixed(2));
 
   let warningMessage: string | null = null;
@@ -62,12 +75,7 @@ export function detectCashLegalThreshold(amountTtc: number, paymentMethod?: Paym
 }
 
 export function formatMad(amount: number, showSymbol = true): string {
-  const formatted = new Intl.NumberFormat('fr-MA', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(amount || 0);
-
-  return showSymbol ? `${formatted} MAD` : formatted;
+  return TaxEngine.formatMad(amount, showSymbol);
 }
 
 export function recalculateDocumentTotals(
@@ -81,31 +89,25 @@ export function recalculateDocumentTotals(
   totalTtc: number;
   remainingAmount: number;
 } {
-  let subtotalHt = 0;
-  let totalTva = 0;
-
-  items.forEach(item => {
-    const totalHt = Number((item.quantity * item.unitPriceHt).toFixed(2));
-    const totalTvaItem = Number((totalHt * (item.tvaRate / 100)).toFixed(2));
-    subtotalHt += totalHt;
-    totalTva += totalTvaItem;
-  });
-
-  subtotalHt = Number(subtotalHt.toFixed(2));
-  totalTva = Number(totalTva.toFixed(2));
-  const rawTtc = Number((subtotalHt + totalTva).toFixed(2));
-
-  // 0.25% stamp duty for cash payment
-  const droitDeTimbre = paymentMethod === 'cash' ? Number((rawTtc * 0.0025).toFixed(2)) : 0;
-  const totalTtc = Number((rawTtc + droitDeTimbre).toFixed(2));
-  const remainingAmount = Number((totalTtc - paidAmount).toFixed(2));
+  const docResult = TaxEngine.calculateDocumentTotals(
+    items.map(item => ({
+      quantity: item.quantity,
+      unitPrice: item.unitPriceHt,
+      tvaRate: item.tvaRate,
+      isTaxInclusive: false
+    })),
+    {
+      paymentMethod,
+      paidAmount
+    }
+  );
 
   return {
-    subtotalHt,
-    totalTva,
-    droitDeTimbre,
-    totalTtc,
-    remainingAmount: remainingAmount > 0 ? remainingAmount : 0
+    subtotalHt: docResult.subtotalHt,
+    totalTva: docResult.totalTva,
+    droitDeTimbre: docResult.droitDeTimbre,
+    totalTtc: docResult.totalTtc,
+    remainingAmount: docResult.remainingAmount
   };
 }
 
